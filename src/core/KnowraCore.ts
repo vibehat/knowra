@@ -172,21 +172,48 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
 
   public readonly knowledge = {
     connect: (from: string, to: string, type: string, metadata?: unknown): Relationship => {
+      // Validate relationship type
+      if (!type || typeof type !== 'string' || type.trim() === '') {
+        throw new Error('Relationship type must not be empty');
+      }
+
+      // Check for invalid node IDs first (validation logic before existence check)
       if (!isValidId(from) || !isValidId(to)) {
         throw new Error('Invalid node IDs');
       }
 
+      // Then check if nodes exist (existence check after validation)
       if (!this.graphFoundation.hasNode(from) || !this.graphFoundation.hasNode(to)) {
         throw new Error('One or both nodes do not exist');
+      }
+
+      // Handle metadata and extract strength
+      let strength = 1.0;
+      let processedMetadata = metadata;
+
+      if (metadata && typeof metadata === 'object' && metadata !== null) {
+        const metaObj = metadata as Record<string, unknown>;
+        if (typeof metaObj.strength === 'number') {
+          strength = validateConfidence(metaObj.strength);
+          // Remove strength from metadata since it's handled separately
+          const { strength: _, ...restMetadata } = metaObj;
+          processedMetadata = Object.keys(restMetadata).length > 0 ? restMetadata : undefined;
+        } else {
+          processedMetadata = metadata;
+        }
+      } else if (metadata === null) {
+        processedMetadata = null;
+      } else if (metadata === undefined) {
+        processedMetadata = undefined;
       }
 
       const relationship: Relationship = {
         from,
         to,
-        type,
-        strength: 1.0,
+        type: type.trim(),
+        strength,
         created: new Date(),
-        metadata: metadata ? (metadata as Record<string, unknown>) : undefined,
+        metadata: processedMetadata as Record<string, unknown> | null | undefined,
       };
 
       this.graphFoundation.addEdge(relationship);
@@ -196,8 +223,16 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       return deepClone(relationship);
     },
 
-    disconnect: (from: string, to: string): boolean => {
-      const removed = this.graphFoundation.deleteEdge(from, to);
+    disconnect: (from: string, to: string, type?: string): boolean => {
+      if (!isValidId(from) || !isValidId(to)) {
+        return false;
+      }
+
+      if (!this.graphFoundation.hasNode(from) || !this.graphFoundation.hasNode(to)) {
+        return false;
+      }
+
+      const removed = this.graphFoundation.deleteEdge(from, to, type);
 
       if (removed) {
         this.events.emit('knowledge:afterDisconnect', from, to);
@@ -207,7 +242,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
     },
 
     getRelationships: (nodeId: string, direction?: 'in' | 'out' | 'both'): Relationship[] => {
-      const dir = direction ?? 'both';
+      const dir = direction ?? 'out'; // Default to outgoing relationships
       if (!isValidId(nodeId)) return [];
 
       return this.graphFoundation.getNodeEdges(nodeId, dir);

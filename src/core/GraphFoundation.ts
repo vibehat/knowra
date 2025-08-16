@@ -282,16 +282,22 @@ export class GraphFoundation {
     }
 
     const edges: Relationship[] = [];
+    const processedEdges = new Set<string>(); // Track processed edges to avoid duplicates
 
     try {
       if (direction === 'out' || direction === 'both') {
         this.graph.forEachOutEdge(nodeId, (edge, attributes) => {
           edges.push(deepClone(attributes));
+          processedEdges.add(edge);
         });
       }
 
       if (direction === 'in' || direction === 'both') {
         this.graph.forEachInEdge(nodeId, (edge, attributes) => {
+          // For 'both' direction, avoid duplicating self-referencing relationships
+          if (direction === 'both' && processedEdges.has(edge)) {
+            return; // Skip this edge as it's already processed
+          }
           edges.push(deepClone(attributes));
         });
       }
