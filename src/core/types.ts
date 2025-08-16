@@ -154,6 +154,48 @@ export interface CentralNode {
 // ============ Level 3: Experience Types ============
 
 /**
+ * Pattern represents a detected recurring pattern in experiences
+ */
+export interface Pattern {
+  id: string;
+  description: string; // Human-readable pattern description
+  frequency: number; // How often this pattern occurs
+  confidence: number; // Confidence in pattern validity (0-1)
+  nodes: string[]; // Node sequence that forms the pattern
+  contexts: string[]; // Contexts where this pattern appears
+  successRate: number; // Success rate of this pattern (0-1)
+  avgTraversalTime: number; // Average time to complete pattern
+  lastSeen: Date; // When pattern was last observed
+}
+
+/**
+ * Insight represents knowledge extracted from experience analysis
+ */
+export interface Insight {
+  id: string;
+  type: 'optimization' | 'warning' | 'discovery' | 'trend';
+  description: string; // Human-readable insight
+  confidence: number; // Confidence in insight validity (0-1)
+  evidence: string[]; // Experience IDs that support this insight
+  impact: 'low' | 'medium' | 'high'; // Potential impact of acting on insight
+  actionable: boolean; // Whether this insight can be acted upon
+  timestamp: Date; // When insight was generated
+}
+
+/**
+ * ExperienceMetrics represents analytics about experience data
+ */
+export interface ExperienceMetrics {
+  totalExperiences: number;
+  successRate: number; // Overall success rate (0-1)
+  avgTraversalTime: number; // Average time across all experiences
+  mostCommonPaths: Array<{ path: string[]; frequency: number }>;
+  topPatterns: Pattern[];
+  recentTrends: Array<{ metric: string; change: number; timeframe: string }>;
+  contextDistribution: Record<string, number>; // Context -> count mapping
+}
+
+/**
  * Experience represents learned paths through the knowledge graph
  */
 export interface Experience {
@@ -164,7 +206,12 @@ export interface Experience {
   feedback?: string; // What was learned
   timestamp: Date;
   traversalTime: number; // How long it took (ms)
-  reinforcement: number; // Learning weight
+  reinforcement: number; // Learning weight (0-1)
+  patterns?: Pattern[]; // Detected patterns in this experience
+  insights?: Insight[]; // Insights extracted from this experience
+  relatedExperiences?: string[]; // IDs of similar experiences
+  confidence?: number; // Confidence in experience data quality (0-1)
+  metadata?: Record<string, unknown>; // Additional experience metadata
 }
 
 // ============ Level 4: Strategy Types ============
@@ -437,6 +484,55 @@ export const BatchResultSchema = z.object({
 });
 
 /**
+ * Pattern schema with validation rules
+ */
+export const PatternSchema = z.object({
+  id: z.string().min(1, 'Pattern ID must not be empty'),
+  description: z.string().min(1, 'Pattern description must not be empty'),
+  frequency: z.number().int().positive(),
+  confidence: z.number().min(0).max(1),
+  nodes: z.array(z.string().min(1)).min(1, 'Pattern must contain at least one node'),
+  contexts: z.array(z.string().min(1)),
+  successRate: z.number().min(0).max(1),
+  avgTraversalTime: z.number().nonnegative(),
+  lastSeen: z.date(),
+});
+
+/**
+ * Insight schema with validation rules
+ */
+export const InsightSchema = z.object({
+  id: z.string().min(1, 'Insight ID must not be empty'),
+  type: z.enum(['optimization', 'warning', 'discovery', 'trend']),
+  description: z.string().min(1, 'Insight description must not be empty'),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(z.string().min(1)),
+  impact: z.enum(['low', 'medium', 'high']),
+  actionable: z.boolean(),
+  timestamp: z.date(),
+});
+
+/**
+ * ExperienceMetrics schema with validation rules
+ */
+export const ExperienceMetricsSchema = z.object({
+  totalExperiences: z.number().int().nonnegative(),
+  successRate: z.number().min(0).max(1),
+  avgTraversalTime: z.number().nonnegative(),
+  mostCommonPaths: z.array(z.object({
+    path: z.array(z.string().min(1)).min(1),
+    frequency: z.number().int().positive(),
+  })),
+  topPatterns: z.array(PatternSchema),
+  recentTrends: z.array(z.object({
+    metric: z.string().min(1),
+    change: z.number(),
+    timeframe: z.string().min(1),
+  })),
+  contextDistribution: z.record(z.number().int().nonnegative()),
+});
+
+/**
  * Experience schema with validation rules
  */
 export const ExperienceSchema = z.object({
@@ -448,6 +544,11 @@ export const ExperienceSchema = z.object({
   timestamp: z.date(),
   traversalTime: z.number().nonnegative(),
   reinforcement: z.number().min(0).max(1),
+  patterns: z.array(PatternSchema).optional(),
+  insights: z.array(InsightSchema).optional(),
+  relatedExperiences: z.array(z.string().min(1)).optional(),
+  confidence: z.number().min(0).max(1).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 /**
@@ -590,6 +691,42 @@ export function validateKnowledge(data: unknown): data is Knowledge {
 export function validateSearchOptions(data: unknown): data is SearchOptions {
   try {
     SearchOptionsSchema.parse(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates a Pattern object at runtime
+ */
+export function validatePattern(data: unknown): data is Pattern {
+  try {
+    PatternSchema.parse(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates an Insight object at runtime
+ */
+export function validateInsight(data: unknown): data is Insight {
+  try {
+    InsightSchema.parse(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates ExperienceMetrics at runtime
+ */
+export function validateExperienceMetrics(data: unknown): data is ExperienceMetrics {
+  try {
+    ExperienceMetricsSchema.parse(data);
     return true;
   } catch {
     return false;

@@ -379,7 +379,19 @@ export class TextSearchManager {
     limit = 50
   ): void {
     try {
-      const indexResults = index.search(query, { limit });
+      // Ensure query is a string and handle special characters
+      if (typeof query !== 'string') {
+        console.error('Query must be a string:', typeof query, query);
+        return;
+      }
+      
+      // Sanitize query for FlexSearch - remove/escape problematic characters
+      const sanitizedQuery = query.replace(/[^\w\s\-]/g, ' ').trim();
+      if (!sanitizedQuery) {
+        return; // Empty query after sanitization
+      }
+      
+      const indexResults = index.search(sanitizedQuery, { limit });
       
       for (const id of indexResults) {
         const node = this.nodeStorage.get(id as string);

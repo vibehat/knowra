@@ -14,6 +14,9 @@ import type {
   Information,
   Knowledge,
   Experience,
+  Pattern,
+  Insight,
+  ExperienceMetrics,
   Strategy,
   Intuition,
   Relationship,
@@ -37,6 +40,27 @@ import { generateId, isValidId, deepClone, contentToString, validateConfidence }
 import { GraphFoundation } from './GraphFoundation.js';
 import { PersistenceManager } from './PersistenceManager.js';
 import { TextSearchManager } from './TextSearchManager.js';
+import { PathTracker } from './experience/PathTracker.js';
+import { PatternDetector } from './levels/experience/PatternDetector.js';
+import { InsightExtractor } from './levels/experience/InsightExtractor.js';
+import { LearningEngine } from './levels/experience/LearningEngine.js';
+import { SuggestionEngine } from './levels/experience/SuggestionEngine.js';
+import { EventBus } from './orchestration/EventBus.js';
+import { InformationManager } from './levels/information/InformationManager.js';
+import { KnowledgeManager } from './levels/knowledge/KnowledgeManager.js';
+import { ExperienceManager } from './levels/experience/ExperienceManager.js';
+import { StrategyManager } from './levels/strategy/StrategyManager.js';
+import { IntuitionManager } from './levels/intuition/IntuitionManager.js';
+import { 
+  InformationAPI, 
+  KnowledgeAPI, 
+  ExperienceAPI, 
+  StrategyAPI, 
+  IntuitionAPI, 
+  AnalyzeAPI, 
+  PluginAPI,
+  EventAPI 
+} from './api/index.js';
 
 /**
  * Core implementation of the Knowra Knowledge Database
@@ -47,9 +71,13 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
   private graphFoundation = new GraphFoundation();
   private persistenceManager = new PersistenceManager();
   private textSearchManager = new TextSearchManager();
+  private pathTracker: PathTracker;
+  private eventBus = new EventBus();
   
   // Higher-level data structures that don't fit in the graph
   private experiences = new Map<string, Experience>();
+  private patterns = new Map<string, Pattern>();
+  private insights = new Map<string, Insight>();
   private strategies = new Map<string, Strategy>();
   private intuitions = new Map<string, Intuition>();
 
@@ -57,778 +85,124 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
   private pluginRegistry = new Map<string, Plugin>();
   private eventHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
 
+  // Experience-level services
+  private patternDetector: PatternDetector;
+  private insightExtractor: InsightExtractor;
+  private learningEngine: LearningEngine;
+  private suggestionEngine: SuggestionEngine;
+
+  // API Level Managers (private)
+  private informationManager: InformationManager;
+  private knowledgeManager: KnowledgeManager;
+  private experienceManager: ExperienceManager;
+  private strategyManager: StrategyManager;
+  private intuitionManager: IntuitionManager;
+
+  // Public API Instances (replacing object literals)
+  public readonly information: InformationAPI;
+  public readonly knowledge: KnowledgeAPI;
+  public readonly experience: ExperienceAPI;
+  public readonly strategy: StrategyAPI;
+  public readonly intuition: IntuitionAPI;
+  public readonly analyze: AnalyzeAPI;
+  public readonly plugins: PluginAPI;
+  public readonly events: EventAPI;
+
   constructor() {
+    // Initialize the path tracker with node validation
+    this.pathTracker = new PathTracker(
+      {
+        maxConcurrentPaths: 50,
+        autoCompleteTimeout: 600000, // 10 minutes
+        enableDetailedTiming: true,
+        validateNodes: true,
+        recordIntermediary: true,
+      },
+      (nodeId: string) => this.graphFoundation.hasNode(nodeId)
+    );
+
+    // Initialize experience-level services
+    this.patternDetector = new PatternDetector({
+      minPathLength: 3,
+      similarityThreshold: 0.5,
+      maxPatternsPerDetection: 5,
+    });
+    
+    this.insightExtractor = new InsightExtractor({
+      minConfidenceThreshold: 0.3,
+      sentimentAnalysisEnabled: true,
+      patternDetectionEnabled: true,
+    });
+    
+    this.learningEngine = new LearningEngine(this.experiences, {
+      decayPeriod: 30,
+      maxReinforcement: 1.0,
+      minReinforcement: 0.0,
+      similarityThreshold: 0.3,
+      reinforcementDecayRate: 0.1,
+    });
+    
+    this.suggestionEngine = new SuggestionEngine(this.experiences, this.graphFoundation, {
+      defaultLimit: 5,
+      minConfidence: 0.1,
+      recencyWeightFactor: 0.2,
+      contextMatchBonus: 0.3,
+      maxDaysForRecency: 30,
+    });
+
+    // Initialize API Level Managers
+    this.informationManager = new InformationManager({
+      graphFoundation: this.graphFoundation,
+      textSearchManager: this.textSearchManager,
+      eventBus: this.eventBus,
+      cleanupRelatedData: (nodeId: string) => this.cleanupRelatedData(nodeId),
+    });
+
+    this.knowledgeManager = new KnowledgeManager({
+      graphFoundation: this.graphFoundation,
+      eventBus: this.eventBus,
+    });
+
+    this.experienceManager = new ExperienceManager({
+      graphFoundation: this.graphFoundation,
+      eventBus: this.eventBus,
+      pathTracker: this.pathTracker,
+      patternDetector: this.patternDetector,
+      insightExtractor: this.insightExtractor,
+      learningEngine: this.learningEngine,
+      suggestionEngine: this.suggestionEngine,
+      experiences: this.experiences,
+    });
+
+    this.strategyManager = new StrategyManager({
+      eventBus: this.eventBus,
+      knowledgeManager: this.knowledgeManager,
+      strategies: this.strategies,
+    });
+
+    this.intuitionManager = new IntuitionManager({
+      eventBus: this.eventBus,
+      intuitions: this.intuitions,
+    });
+
+    // Initialize API instances (replacing object literals)
+    this.information = new InformationAPI(this.informationManager);
+    this.knowledge = new KnowledgeAPI(this.knowledgeManager);
+    this.experience = new ExperienceAPI(this.experienceManager);
+    this.strategy = new StrategyAPI(this.strategyManager);
+    this.intuition = new IntuitionAPI(this.intuitionManager);
+    this.analyze = new AnalyzeAPI(this.graphFoundation, this.knowledge);
+    this.plugins = new PluginAPI(
+      this.pluginRegistry, 
+      this.eventHandlers,
+      (plugin: Plugin) => plugin.init?.(this)
+    );
+    this.events = new EventAPI(this.eventHandlers);
+
     // Initialize the core system
     this.setupEventSystem();
   }
 
-  // ============ Level 1: Information API ============
-
-  public readonly information = {
-    add: (content: unknown, metadata?: Partial<Information>): string => {
-      const id = generateId('info');
-      const now = new Date();
-
-      const info: Information = {
-        id,
-        content,
-        type: metadata?.type ?? 'unknown',
-        source: metadata?.source ?? undefined,
-        created: now,
-        modified: now,
-        metadata: metadata?.metadata,
-        ...metadata,
-      };
-
-      this.graphFoundation.addNode(info);
-      this.textSearchManager.addNode(info);
-      this.events.emit('information:afterAdd', info);
-
-      return id;
-    },
-
-    get: (id: string): Information | null => {
-      if (!isValidId(id)) return null;
-      return this.graphFoundation.getNode(id);
-    },
-
-    update: (id: string, updates: Partial<Information>): boolean => {
-      if (!isValidId(id)) return false;
-
-      const success = this.graphFoundation.updateNode(id, updates);
-      if (success) {
-        const updated = this.graphFoundation.getNode(id);
-        if (updated) {
-          this.textSearchManager.updateNode(updated);
-          this.events.emit('information:afterUpdate', updated);
-        }
-      }
-
-      return success;
-    },
-
-    delete: (id: string): boolean => {
-      if (!isValidId(id)) return false;
-
-      const deleted = this.graphFoundation.deleteNode(id);
-      if (deleted) {
-        // Clean up related data
-        this.textSearchManager.removeNode(id);
-        this.cleanupRelatedData(id);
-        this.events.emit('information:afterDelete', id);
-      }
-
-      return deleted;
-    },
-
-    search: (query: string, options?: SearchOptions): Information[] => {
-      if (!query.trim()) return [];
-
-      // Use FlexSearch for better search performance and accuracy
-      return this.textSearchManager.search(query, options);
-    },
-
-    batch: (operations: InfoOperation[]): BatchResult => {
-      const result: BatchResult = {
-        success: true,
-        processed: 0,
-        errors: [],
-        results: [],
-      };
-
-      for (const op of operations) {
-        try {
-          switch (op.operation) {
-            case 'add':
-              if (!op.data) throw new Error('Add operation requires data');
-              const id = this.information.add(op.data.content, op.data);
-              result.results.push(id);
-              break;
-
-            case 'update':
-              if (!op.id || !op.data) throw new Error('Update operation requires id and data');
-              const updated = this.information.update(op.id, op.data);
-              if (!updated) throw new Error('Update failed');
-              result.results.push(op.id);
-              break;
-
-            case 'delete':
-              if (!op.id) throw new Error('Delete operation requires id');
-              const deleted = this.information.delete(op.id);
-              if (!deleted) throw new Error('Delete failed');
-              result.results.push(op.id);
-              break;
-          }
-          result.processed++;
-        } catch (error) {
-          result.success = false;
-          result.errors.push({
-            operation: op,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-
-      return result;
-    },
-  };
-
-  // ============ Level 2: Knowledge API ============
-
-  public readonly knowledge = {
-    /**
-     * Create a relationship between two nodes
-     * @param from Source node ID
-     * @param to Target node ID
-     * @param type Relationship type (e.g., 'leads_to', 'related_to')
-     * @param metadata Optional metadata including strength and custom properties
-     * @returns Created Relationship object
-     * @throws Error if validation fails or nodes don't exist
-     */
-    connect: (from: string, to: string, type: string, metadata?: unknown): Relationship => {
-      // Validate relationship type
-      if (!type || typeof type !== 'string' || type.trim() === '') {
-        throw new Error('Relationship type must not be empty');
-      }
-
-      // Check for invalid node IDs first (validation logic before existence check)
-      if (!isValidId(from) || !isValidId(to)) {
-        throw new Error('Invalid node IDs');
-      }
-
-      // Then check if nodes exist (existence check after validation)
-      if (!this.graphFoundation.hasNode(from) || !this.graphFoundation.hasNode(to)) {
-        throw new Error('One or both nodes do not exist');
-      }
-
-      // Handle metadata and extract strength
-      let strength = 1.0;
-      let processedMetadata = metadata;
-
-      if (metadata && typeof metadata === 'object' && metadata !== null) {
-        const metaObj = metadata as Record<string, unknown>;
-        if (typeof metaObj.strength === 'number') {
-          strength = validateConfidence(metaObj.strength);
-          // Remove strength from metadata since it's handled separately
-          const { strength: _, ...restMetadata } = metaObj;
-          processedMetadata = Object.keys(restMetadata).length > 0 ? restMetadata : undefined;
-        } else {
-          processedMetadata = metadata;
-        }
-      } else if (metadata === null) {
-        processedMetadata = null;
-      } else if (metadata === undefined) {
-        processedMetadata = undefined;
-      }
-
-      const relationship: Relationship = {
-        from,
-        to,
-        type: type.trim(),
-        strength,
-        created: new Date(),
-        metadata: processedMetadata as Record<string, unknown> | null | undefined,
-      };
-
-      this.graphFoundation.addEdge(relationship);
-
-      this.events.emit('knowledge:afterConnect', relationship);
-
-      return deepClone(relationship);
-    },
-
-    /**
-     * Remove relationship(s) between two nodes
-     * @param from Source node ID
-     * @param to Target node ID
-     * @param type Optional relationship type to remove (if not specified, removes all)
-     * @returns True if relationship(s) were removed, false otherwise
-     */
-    disconnect: (from: string, to: string, type?: string): boolean => {
-      if (!isValidId(from) || !isValidId(to)) {
-        return false;
-      }
-
-      if (!this.graphFoundation.hasNode(from) || !this.graphFoundation.hasNode(to)) {
-        return false;
-      }
-
-      const removed = this.graphFoundation.deleteEdge(from, to, type);
-
-      if (removed) {
-        this.events.emit('knowledge:afterDisconnect', from, to);
-      }
-
-      return removed;
-    },
-
-    /**
-     * Get all relationships for a node in specified direction
-     * @param nodeId Node ID to query relationships for
-     * @param direction Direction of relationships ('in', 'out', or 'both', default: 'out')
-     * @returns Array of Relationship objects
-     */
-    getRelationships: (nodeId: string, direction?: 'in' | 'out' | 'both'): Relationship[] => {
-      const dir = direction ?? 'out'; // Default to outgoing relationships
-      if (!isValidId(nodeId)) return [];
-
-      return this.graphFoundation.getNodeEdges(nodeId, dir);
-    },
-
-    /**
-     * Find all paths between two nodes with enhanced validation and options
-     * @param from Source node ID
-     * @param to Target node ID  
-     * @param maxDepth Maximum path depth (default: 5)
-     * @returns Array of paths (arrays of node IDs), sorted by path length and strength
-     */
-    findPaths: (from: string, to: string, maxDepth = 5): string[][] => {
-      // Enhanced input validation
-      if (!from || !to || typeof from !== 'string' || typeof to !== 'string') {
-        return [];
-      }
-      
-      if (!isValidId(from) || !isValidId(to)) {
-        return [];
-      }
-      
-      // Validate maxDepth parameter
-      if (typeof maxDepth !== 'number' || maxDepth < 1 || maxDepth > 20) {
-        maxDepth = 5; // Use safe default
-      }
-      
-      const paths = this.graphFoundation.findPaths(from, to, maxDepth);
-      
-      // Sort paths by length (shortest first) and then by relationship strength
-      return paths.sort((pathA, pathB) => {
-        // Primary sort: path length (shorter paths first)
-        if (pathA.length !== pathB.length) {
-          return pathA.length - pathB.length;
-        }
-        
-        // Secondary sort: path strength (stronger paths first)
-        const strengthA = this.calculatePathStrength(pathA);
-        const strengthB = this.calculatePathStrength(pathB);
-        return strengthB - strengthA;
-      });
-    },
-
-    /**
-     * Extract a subgraph around a node with enhanced Knowledge objects
-     * @param nodeId Central node ID to build subgraph around
-     * @param depth Maximum traversal depth (default: 2)
-     * @returns Array of Knowledge objects with nodes and their relationships
-     */
-    getSubgraph: (nodeId: string, depth = 2): Knowledge[] => {
-      // Input validation
-      if (!nodeId || typeof nodeId !== 'string' || !isValidId(nodeId)) {
-        return [];
-      }
-      
-      // Validate depth parameter
-      if (typeof depth !== 'number' || depth < 1 || depth > 10) {
-        depth = 2; // Use safe default
-      }
-      
-      const subgraph = this.graphFoundation.getSubgraph(nodeId, depth);
-      
-      // Enhance Knowledge objects with contextual information
-      return subgraph.map(knowledge => ({
-        ...knowledge,
-        context: this.buildKnowledgeContext(knowledge),
-      }));
-    },
-
-    /**
-     * Perform graph clustering to identify knowledge communities
-     * @param algorithm Clustering algorithm ('community' or 'similarity')
-     * @returns Array of KnowledgeCluster objects with coherence scores
-     */
-    cluster: (algorithm = 'community' as const): KnowledgeCluster[] => {
-      // Validate algorithm parameter
-      const validAlgorithms = ['community', 'similarity'] as const;
-      if (!validAlgorithms.includes(algorithm)) {
-        algorithm = 'community'; // Use safe default
-      }
-      
-      const clusters = this.graphFoundation.clusterNodes(algorithm);
-      
-      // Emit clustering event for plugins
-      this.events.emit('knowledge:onCluster', clusters, algorithm);
-      
-      return clusters;
-    },
-
-    /**
-     * Perform clustering with algorithm-specific options
-     * @param algorithm Clustering algorithm ('community' or 'similarity')
-     * @param options Algorithm-specific options
-     * @returns Array of KnowledgeCluster objects
-     */
-    clusterWithOptions: (
-      algorithm: 'community' | 'similarity',
-      options?: any
-    ): KnowledgeCluster[] => {
-      const validAlgorithms = ['community', 'similarity'] as const;
-      if (!validAlgorithms.includes(algorithm)) {
-        algorithm = 'community'; // Use safe default
-      }
-      
-      const clusters = this.graphFoundation.clusterWithOptions(algorithm, options);
-      
-      // Emit clustering event for plugins
-      this.events.emit('knowledge:onCluster', clusters, algorithm);
-      
-      return clusters;
-    },
-
-    /**
-     * Get comprehensive metrics for a node
-     * @param nodeId Node ID to analyze
-     * @returns Enhanced NodeMetrics object
-     */
-    getNodeMetrics: (nodeId: string): NodeMetrics => {
-      return this.graphFoundation.calculateNodeMetrics(nodeId);
-    },
-
-    /**
-     * Get graph-level metrics
-     * @returns GraphMetrics object
-     */
-    getGraphMetrics: (): GraphMetrics => {
-      return this.graphFoundation.getGraphMetrics();
-    },
-
-    /**
-     * Analyze structural properties of the graph
-     * @returns StructuralAnalysis object
-     */
-    analyzeStructure: (): StructuralAnalysis => {
-      return this.graphFoundation.analyzeStructure();
-    },
-
-    /**
-     * Get structural importance analysis
-     * @returns StructuralImportance object
-     */
-    getStructuralImportance: (): StructuralImportance => {
-      return this.graphFoundation.getStructuralImportance();
-    },
-
-    /**
-     * Find most central nodes
-     * @param count Number of nodes to return
-     * @param centralityType Type of centrality measure
-     * @returns Array of central nodes
-     */
-    findCentralNodes: (
-      count: number = 5,
-      centralityType: 'degree' | 'betweenness' | 'closeness' | 'pagerank' | 'eigenvector' = 'pagerank'
-    ): CentralNode[] => {
-      return this.graphFoundation.findCentralNodes(count, centralityType);
-    },
-  };
-
-  // ============ Level 3: Experience API ============
-
-  public readonly experience = {
-    recordPath: (
-      path: string[],
-      context: string,
-      outcome: 'success' | 'failure' | 'neutral'
-    ): string => {
-      if (path.length < 2) {
-        throw new Error('Path must contain at least 2 nodes');
-      }
-
-      const id = generateId('exp');
-      const experience: Experience = {
-        id,
-        path: [...path],
-        context,
-        outcome,
-        timestamp: new Date(),
-        traversalTime: 0, // Will be calculated by higher-level systems
-        reinforcement: outcome === 'success' ? 1.0 : outcome === 'failure' ? -0.5 : 0.0,
-      };
-
-      this.experiences.set(id, experience);
-      this.events.emit('experience:afterRecord', experience);
-
-      return id;
-    },
-
-    getExperiences: (nodeId?: string): Experience[] => {
-      const experiences: Experience[] = [];
-
-      for (const exp of this.experiences.values()) {
-        if (!nodeId || exp.path.includes(nodeId)) {
-          experiences.push(deepClone(exp));
-        }
-      }
-
-      return experiences.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-    },
-
-    learnFrom: (experienceId: string, feedback: string): void => {
-      const experience = this.experiences.get(experienceId);
-      if (!experience) return;
-
-      experience.feedback = feedback;
-      this.events.emit('experience:onLearn', experienceId, feedback);
-    },
-
-    reinforcePath: (path: string[], weight: number): void => {
-      const normalizedWeight = validateConfidence(weight);
-
-      // Find related experiences and adjust their reinforcement
-      for (const experience of this.experiences.values()) {
-        const pathOverlap = experience.path.filter(node => path.includes(node)).length;
-        const overlapRatio = pathOverlap / Math.max(experience.path.length, path.length);
-
-        if (overlapRatio > 0.5) {
-          experience.reinforcement += normalizedWeight * overlapRatio * 0.1;
-          experience.reinforcement = validateConfidence(experience.reinforcement);
-        }
-      }
-    },
-
-    forgetOld: (daysOld: number): number => {
-      const cutoff = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
-      let removed = 0;
-
-      for (const [id, experience] of this.experiences.entries()) {
-        if (experience.timestamp < cutoff) {
-          this.experiences.delete(id);
-          removed++;
-        }
-      }
-
-      return removed;
-    },
-
-    getSuggestions: (currentNode: string, context?: string): string[] => {
-      if (!isValidId(currentNode)) return [];
-
-      const suggestions = new Map<string, number>();
-
-      // Analyze successful experiences starting from this node
-      for (const experience of this.experiences.values()) {
-        if (experience.outcome === 'success' && experience.path[0] === currentNode) {
-          if (context && !experience.context.includes(context)) continue;
-
-          // Suggest the next node in successful paths
-          if (experience.path.length > 1) {
-            const nextNode = experience.path[1];
-            if (nextNode) {
-              const score = suggestions.get(nextNode) ?? 0;
-              suggestions.set(nextNode, score + experience.reinforcement);
-            }
-          }
-        }
-      }
-
-      // Sort by score and return top suggestions
-      return Array.from(suggestions.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([nodeId]) => nodeId);
-    },
-  };
-
-  // ============ Level 4: Strategy API ============
-
-  public readonly strategy = {
-    planRoute: (goal: string, startNode: string, constraints?: Constraints): Strategy => {
-      // Simplified strategy planning - full implementation would use advanced algorithms
-      const id = generateId('strategy');
-
-      const strategy: Strategy = {
-        id,
-        goal,
-        startNode,
-        route: [startNode], // Simplified: just the start node
-        algorithm: 'simple',
-        cost: 0,
-        confidence: 0.5,
-      };
-
-      this.strategies.set(id, strategy);
-      return deepClone(strategy);
-    },
-
-    optimizePath: (from: string, to: string, criteria = 'shortest' as const): string[] => {
-      const paths = this.knowledge.findPaths(from, to);
-      if (paths.length === 0) return [];
-
-      // Simple optimization based on criteria
-      if (criteria === 'shortest') {
-        return paths.reduce((shortest, current) =>
-          current.length < shortest.length ? current : shortest
-        );
-      }
-
-      return paths[0] ?? [];
-    },
-
-    findStrategies: (goal: string): Strategy[] => {
-      const strategies: Strategy[] = [];
-
-      for (const strategy of this.strategies.values()) {
-        if (strategy.goal.toLowerCase().includes(goal.toLowerCase())) {
-          strategies.push(deepClone(strategy));
-        }
-      }
-
-      return strategies;
-    },
-
-    evaluateStrategy: (strategyId: string): StrategyMetrics => {
-      return {
-        efficiency: 0.7,
-        reliability: 0.8,
-        novelty: 0.6,
-        complexity: 0.5,
-      };
-    },
-
-    adaptStrategy: (strategyId: string, feedback: Experience): Strategy => {
-      const strategy = this.strategies.get(strategyId);
-      if (!strategy) {
-        throw new Error('Strategy not found');
-      }
-
-      // Simplified adaptation
-      const adapted = deepClone(strategy);
-      adapted.confidence = validateConfidence(
-        adapted.confidence + (feedback.outcome === 'success' ? 0.1 : -0.1)
-      );
-
-      this.strategies.set(strategyId, adapted);
-      return adapted;
-    },
-
-    compareStrategies: (ids: string[]): ComparisonResult => {
-      const strategies = ids
-        .map(id => this.strategies.get(id))
-        .filter((s): s is Strategy => s !== undefined);
-
-      const rankings = strategies.map(strategy => ({
-        strategyId: strategy.id,
-        score: strategy.confidence,
-        reasons: [`Confidence: ${strategy.confidence}`],
-      }));
-
-      rankings.sort((a, b) => b.score - a.score);
-
-      return {
-        strategies: strategies.map(s => deepClone(s)),
-        rankings,
-        recommendation: rankings[0]?.strategyId ?? '',
-      };
-    },
-  };
-
-  // ============ Level 5: Intuition API ============
-
-  public readonly intuition = {
-    recognize: (pattern: string): Intuition | null => {
-      for (const intuition of this.intuitions.values()) {
-        if (intuition.pattern.includes(pattern) || pattern.includes(intuition.pattern)) {
-          intuition.usageCount++;
-          return deepClone(intuition);
-        }
-      }
-      return null;
-    },
-
-    buildIntuition: (experiences: string[]): Intuition => {
-      const id = generateId('intuition');
-
-      const intuition: Intuition = {
-        id,
-        pattern: 'Generated pattern',
-        trigger: ['common', 'pattern'],
-        shortcut: experiences.slice(0, 3),
-        confidence: 0.7,
-        usageCount: 0,
-        successRate: 0.8,
-      };
-
-      this.intuitions.set(id, intuition);
-      return deepClone(intuition);
-    },
-
-    getShortcut: (trigger: string): string[] | null => {
-      for (const intuition of this.intuitions.values()) {
-        if (intuition.trigger.some(t => t.includes(trigger) || trigger.includes(t))) {
-          return [...intuition.shortcut];
-        }
-      }
-      return null;
-    },
-
-    strengthenIntuition: (intuitionId: string): void => {
-      const intuition = this.intuitions.get(intuitionId);
-      if (intuition) {
-        intuition.confidence = validateConfidence(intuition.confidence + 0.05);
-        intuition.successRate = validateConfidence(intuition.successRate + 0.02);
-      }
-    },
-
-    getConfidence: (intuitionId: string): number => {
-      return this.intuitions.get(intuitionId)?.confidence ?? 0;
-    },
-
-    pruneUnreliable: (threshold = 0.3): number => {
-      let removed = 0;
-
-      for (const [id, intuition] of this.intuitions.entries()) {
-        if (intuition.confidence < threshold) {
-          this.intuitions.delete(id);
-          removed++;
-        }
-      }
-
-      return removed;
-    },
-  };
-
-  // ============ Cross-Level Analysis ============
-
-  public readonly analyze = {
-    extractKnowledge: (informationIds: string[]): Knowledge[] => {
-      return informationIds
-        .map(id => this.graphFoundation.getNode(id))
-        .filter((node): node is Information => node !== undefined)
-        .map(node => ({
-          node: deepClone(node),
-          edges: this.knowledge.getRelationships(node.id),
-        }));
-    },
-
-    trackExploration: (knowledgePath: Knowledge[]): Experience => {
-      const path = knowledgePath.map(k => k.node.id);
-      return {
-        id: generateId('exploration'),
-        path,
-        context: 'Cross-level exploration',
-        outcome: 'neutral',
-        timestamp: new Date(),
-        traversalTime: 0,
-        reinforcement: 0,
-      };
-    },
-
-    synthesizeStrategy: (experiences: Experience[]): Strategy => {
-      const successfulPaths = experiences
-        .filter(exp => exp.outcome === 'success')
-        .map(exp => exp.path);
-
-      const mostCommonPath = successfulPaths[0] ?? [];
-      const startNode = mostCommonPath[0];
-
-      if (!startNode) {
-        throw new Error('No successful experiences to synthesize strategy from');
-      }
-
-      return {
-        id: generateId('synthesized'),
-        goal: 'Synthesized from experience',
-        startNode,
-        route: mostCommonPath,
-        algorithm: 'experience-synthesis',
-        cost: mostCommonPath.length,
-        confidence: 0.6,
-      };
-    },
-
-    formIntuition: (strategies: Strategy[]): Intuition => {
-      const commonPatterns = strategies
-        .map(s => s.algorithm)
-        .filter((algo, index, arr) => arr.indexOf(algo) === index);
-
-      return {
-        id: generateId('formed'),
-        pattern: commonPatterns.join(', '),
-        trigger: ['strategy', 'pattern'],
-        shortcut: strategies[0]?.route ?? [],
-        confidence: 0.7,
-        usageCount: 0,
-        successRate: 0.8,
-      };
-    },
-  };
-
-  // ============ Plugin System ============
-
-  public readonly plugins = {
-    register: (plugin: Plugin): void => {
-      this.pluginRegistry.set(plugin.name, plugin);
-
-      if (plugin.init) {
-        plugin.init(this);
-      }
-    },
-
-    enable: (name: string, config?: unknown): void => {
-      const plugin = this.pluginRegistry.get(name);
-      if (plugin?.enable) {
-        plugin.enable();
-      }
-    },
-
-    disable: (name: string): void => {
-      const plugin = this.pluginRegistry.get(name);
-      if (plugin?.disable) {
-        plugin.disable();
-      }
-    },
-
-    list: (): PluginInfo[] => {
-      return Array.from(this.pluginRegistry.values()).map(plugin => ({
-        name: plugin.name,
-        version: plugin.version,
-        enabled: true, // Simplified - would track actual state
-        enhances: plugin.enhances,
-        dependencies: plugin.dependencies ?? [],
-      }));
-    },
-  };
-
-  // ============ Event System ============
-
-  public readonly events = {
-    on: (event: string, handler: (...args: unknown[]) => void): void => {
-      if (!this.eventHandlers.has(event)) {
-        this.eventHandlers.set(event, []);
-      }
-      this.eventHandlers.get(event)?.push(handler);
-    },
-
-    off: (event: string, handler: (...args: unknown[]) => void): void => {
-      const handlers = this.eventHandlers.get(event);
-      if (handlers) {
-        const index = handlers.indexOf(handler);
-        if (index > -1) {
-          handlers.splice(index, 1);
-        }
-      }
-    },
-
-    emit: (event: string, ...args: unknown[]): void => {
-      const handlers = this.eventHandlers.get(event);
-      if (handlers) {
-        for (const handler of handlers) {
-          try {
-            handler(...args);
-          } catch (error) {
-            console.error(`Error in event handler for ${event}:`, error);
-          }
-        }
-      }
-    },
-  };
 
   // ============ Persistence Methods ============
 
@@ -905,92 +279,35 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
 
   // ============ Private Helper Methods ============
 
-  /**
-   * Build contextual information for a Knowledge object
-   * @param knowledge Knowledge object to build context for
-   * @returns Contextual description string
-   */
-  private buildKnowledgeContext(knowledge: Knowledge): string {
-    const { node, edges } = knowledge;
-    
-    if (edges.length === 0) {
-      return `Isolated node: ${node.type}`;
-    }
-    
-    const incomingCount = edges.filter(e => e.to === node.id).length;
-    const outgoingCount = edges.filter(e => e.from === node.id).length;
-    const relationshipTypes = [...new Set(edges.map(e => e.type))];
-    
-    let contextParts: string[] = [];
-    
-    // Add node type information
-    contextParts.push(`${node.type} node`);
-    
-    // Add relationship information
-    if (outgoingCount > 0) {
-      contextParts.push(`${outgoingCount} outgoing connection${outgoingCount > 1 ? 's' : ''}`);
-    }
-    
-    if (incomingCount > 0) {
-      contextParts.push(`${incomingCount} incoming connection${incomingCount > 1 ? 's' : ''}`);
-    }
-    
-    // Add relationship types if not too many
-    if (relationshipTypes.length <= 3) {
-      contextParts.push(`types: ${relationshipTypes.join(', ')}`);
-    } else {
-      contextParts.push(`${relationshipTypes.length} different relationship types`);
-    }
-    
-    // Add strength information
-    const avgStrength = edges.reduce((sum, e) => sum + (e.strength ?? 1.0), 0) / edges.length;
-    const strengthDesc = avgStrength > 0.8 ? 'strong' : avgStrength > 0.5 ? 'moderate' : 'weak';
-    contextParts.push(`${strengthDesc} connections`);
-    
-    return contextParts.join(', ');
-  }
 
-  /**
-   * Calculate the overall strength of a path based on relationship strengths
-   * @param path Array of node IDs representing the path
-   * @returns Combined strength score (0-1)
-   */
-  private calculatePathStrength(path: string[]): number {
-    if (path.length < 2) return 1.0; // Single node path has maximum strength
-
-    let totalStrength = 0;
-    let edgeCount = 0;
-
-    // Calculate strength based on edges in the path
-    for (let i = 0; i < path.length - 1; i++) {
-      const fromNode = path[i];
-      const toNode = path[i + 1];
-      
-      // Get relationship between consecutive nodes
-      const relationships = this.knowledge.getRelationships(fromNode, 'out')
-        .filter(rel => rel.to === toNode);
-      
-      if (relationships.length > 0) {
-        // Use the strongest relationship if multiple exist
-        const maxStrength = Math.max(...relationships.map(rel => rel.strength ?? 1.0));
-        totalStrength += maxStrength;
-        edgeCount++;
-      } else {
-        // If no direct relationship found, use minimum strength
-        totalStrength += 0.1;
-        edgeCount++;
-      }
-    }
-
-    // Return average strength of all edges in the path
-    return edgeCount > 0 ? totalStrength / edgeCount : 0;
-  }
 
   private setupEventSystem(): void {
     // Initialize core event handlers
-    this.events.on('information:afterDelete', (...args: unknown[]) => {
+    this.eventBus.on('information:afterDelete', (...args: unknown[]) => {
       const nodeId = args[0] as string;
       this.cleanupRelatedData(nodeId);
+    });
+
+    // Bridge internal EventBus to external EventAPI
+    // Forward important system events to the external API for plugins and external consumers
+    this.eventBus.on('knowledge:onCluster', (...args: unknown[]) => {
+      this.events.emit('knowledge:onCluster', ...args);
+    });
+    
+    this.eventBus.on('information:afterAdd', (...args: unknown[]) => {
+      this.events.emit('information:afterAdd', ...args);
+    });
+    
+    this.eventBus.on('knowledge:afterConnect', (...args: unknown[]) => {
+      this.events.emit('knowledge:afterConnect', ...args);
+    });
+    
+    this.eventBus.on('knowledge:afterDisconnect', (...args: unknown[]) => {
+      this.events.emit('knowledge:afterDisconnect', ...args);
+    });
+    
+    this.eventBus.on('experience:afterRecord', (...args: unknown[]) => {
+      this.events.emit('experience:afterRecord', ...args);
     });
   }
 
@@ -1012,4 +329,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       }
     }
   }
+
+
+
 }

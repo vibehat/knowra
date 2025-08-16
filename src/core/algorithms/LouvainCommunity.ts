@@ -53,6 +53,10 @@ export class LouvainCommunity {
   private totalGraphWeight: number = 0;
   private options: Required<CommunityDetectionOptions>;
 
+  // Performance optimization: adjacency maps for faster lookup
+  private nodeToEdges: Map<string, LouvainEdge[]> = new Map();
+  private nodeNeighbors: Map<string, Set<string>> = new Map();
+
   constructor(options: CommunityDetectionOptions = {}) {
     this.options = {
       resolution: options.resolution ?? 1.0,
@@ -102,6 +106,8 @@ export class LouvainCommunity {
     this.edges = [];
     this.communities.clear();
     this.totalGraphWeight = 0;
+    this.nodeToEdges.clear();
+    this.nodeNeighbors.clear();
 
     // Initialize nodes - each node starts in its own community
     graphNodes.forEach((node, index) => {
@@ -118,17 +124,34 @@ export class LouvainCommunity {
         totalWeight: 0,
         internalWeight: 0,
       });
+
+      // Initialize adjacency structures
+      this.nodeToEdges.set(node.id, []);
+      this.nodeNeighbors.set(node.id, new Set());
     });
 
     // Process edges
     graphEdges.forEach(edge => {
       const weight = edge.strength ?? 1.0;
       
-      this.edges.push({
+      const edgeObj: LouvainEdge = {
         source: edge.from,
         target: edge.to,
         weight,
-      });
+      };
+      
+      this.edges.push(edgeObj);
+
+      // Build adjacency maps for performance
+      const sourceEdges = this.nodeToEdges.get(edge.from);
+      const targetEdges = this.nodeToEdges.get(edge.to);
+      const sourceNeighbors = this.nodeNeighbors.get(edge.from);
+      const targetNeighbors = this.nodeNeighbors.get(edge.to);
+
+      if (sourceEdges) sourceEdges.push(edgeObj);
+      if (targetEdges && edge.from !== edge.to) targetEdges.push(edgeObj);
+      if (sourceNeighbors) sourceNeighbors.add(edge.to);
+      if (targetNeighbors && edge.from !== edge.to) targetNeighbors.add(edge.from);
 
       // Update node weights (degree)
       const sourceNode = this.nodes.get(edge.from);
@@ -253,13 +276,14 @@ export class LouvainCommunity {
     const community = this.communities.get(communityId);
     if (!community) return 0;
 
+    const nodeEdges = this.nodeToEdges.get(nodeId);
+    if (!nodeEdges) return 0;
+
     let totalWeight = 0;
     
-    for (const edge of this.edges) {
-      if (edge.source === nodeId && community.nodes.has(edge.target)) {
-        totalWeight += edge.weight;
-      }
-      if (edge.target === nodeId && community.nodes.has(edge.source)) {
+    for (const edge of nodeEdges) {
+      const targetNodeId = edge.source === nodeId ? edge.target : edge.source;
+      if (community.nodes.has(targetNodeId)) {
         totalWeight += edge.weight;
       }
     }
@@ -274,21 +298,14 @@ export class LouvainCommunity {
    */
   private getNeighborCommunities(nodeId: string): Set<number> {
     const neighborCommunities = new Set<number>();
+    const neighbors = this.nodeNeighbors.get(nodeId);
+    
+    if (!neighbors) return neighborCommunities;
 
-    for (const edge of this.edges) {
-      let neighborId: string | null = null;
-      
-      if (edge.source === nodeId) {
-        neighborId = edge.target;
-      } else if (edge.target === nodeId) {
-        neighborId = edge.source;
-      }
-
-      if (neighborId) {
-        const neighborNode = this.nodes.get(neighborId);
-        if (neighborNode) {
-          neighborCommunities.add(neighborNode.community);
-        }
+    for (const neighborId of neighbors) {
+      const neighborNode = this.nodes.get(neighborId);
+      if (neighborNode) {
+        neighborCommunities.add(neighborNode.community);
       }
     }
 
