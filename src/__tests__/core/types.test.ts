@@ -258,16 +258,16 @@ describe('Relationship Type Validation', () => {
       });
     });
 
-    it('should reject self-referencing relationships', () => {
+    it('should allow self-referencing relationships', () => {
       const selfRef = {
         from: 'node-1',
-        to: 'node-1', // Same as from
+        to: 'node-1', // Same as from (now allowed)
         type: 'related',
         created: new Date(),
       };
 
-      expect(() => RelationshipSchema.parse(selfRef)).toThrow();
-      expect(validateRelationship(selfRef)).toBe(false);
+      expect(() => RelationshipSchema.parse(selfRef)).not.toThrow();
+      expect(validateRelationship(selfRef)).toBe(true);
     });
   });
 });

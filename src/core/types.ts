@@ -311,13 +311,7 @@ export const RelationshipSchema = z.object({
   strength: z.number().min(0).max(1).optional(),
   created: z.date(),
   metadata: z.record(z.unknown()).optional(),
-}).refine(
-  (data) => data.from !== data.to,
-  {
-    message: 'Self-referencing relationships are not allowed',
-    path: ['to']
-  }
-);
+});
 
 /**
  * Knowledge schema with validation rules
@@ -578,6 +572,125 @@ export function validateIntuition(data: unknown): data is Intuition {
 export function validateConstraints(data: unknown): data is Constraints {
   try {
     ConstraintsSchema.parse(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ============ Graph Foundation Types ============
+
+/**
+ * Complete graph data structure for import/export
+ */
+export interface GraphData {
+  nodes: Information[];
+  edges: Relationship[];
+  metadata: {
+    version: string;
+    created: Date;
+    nodeCount: number;
+    edgeCount: number;
+    [key: string]: unknown; // Allow additional metadata
+  };
+}
+
+/**
+ * Node metrics for graph analysis
+ */
+export interface NodeMetrics {
+  degree: number;
+  betweenness: number;
+  closeness: number;
+  pageRank?: number;
+}
+
+/**
+ * Backup file information
+ */
+export interface BackupInfo {
+  path: string;
+  created: Date;
+  size: number;
+  isValid: boolean;
+}
+
+/**
+ * GraphData schema with validation rules
+ */
+export const GraphDataSchema = z.object({
+  nodes: z.array(InformationSchema),
+  edges: z.array(RelationshipSchema),
+  metadata: z.object({
+    version: z.string().min(1),
+    created: z.date(),
+    nodeCount: z.number().int().nonnegative(),
+    edgeCount: z.number().int().nonnegative(),
+  }).and(z.record(z.unknown())), // Allow additional metadata
+}).refine(
+  (data) => data.nodes.length === data.metadata.nodeCount,
+  {
+    message: 'Node count in metadata must match actual node count',
+    path: ['metadata', 'nodeCount']
+  }
+).refine(
+  (data) => data.edges.length === data.metadata.edgeCount,
+  {
+    message: 'Edge count in metadata must match actual edge count',
+    path: ['metadata', 'edgeCount']
+  }
+);
+
+/**
+ * NodeMetrics schema with validation rules
+ */
+export const NodeMetricsSchema = z.object({
+  degree: z.number().int().nonnegative(),
+  betweenness: z.number().nonnegative(),
+  closeness: z.number().nonnegative(),
+  pageRank: z.number().nonnegative().optional(),
+});
+
+/**
+ * BackupInfo schema with validation rules
+ */
+export const BackupInfoSchema = z.object({
+  path: z.string().min(1),
+  created: z.date(),
+  size: z.number().int().nonnegative(),
+  isValid: z.boolean(),
+});
+
+/**
+ * Validates GraphData at runtime
+ */
+export function validateGraphData(data: unknown): data is GraphData {
+  try {
+    GraphDataSchema.parse(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates NodeMetrics at runtime
+ */
+export function validateNodeMetrics(data: unknown): data is NodeMetrics {
+  try {
+    NodeMetricsSchema.parse(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates BackupInfo at runtime
+ */
+export function validateBackupInfo(data: unknown): data is BackupInfo {
+  try {
+    BackupInfoSchema.parse(data);
     return true;
   } catch {
     return false;

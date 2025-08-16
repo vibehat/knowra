@@ -29,15 +29,19 @@ import type {
 } from './types.js';
 
 import { generateId, isValidId, deepClone, contentToString, validateConfidence } from './utils.js';
+import { GraphFoundation } from './GraphFoundation.js';
+import { PersistenceManager } from './PersistenceManager.js';
 
 /**
  * Core implementation of the Knowra Knowledge Database
  * Provides all five levels of knowledge evolution as a unified API
  */
 export class KnowraCore implements KnowledgeDatabaseAPI {
-  // Core data storage
-  private nodes = new Map<string, Information>();
-  private edges = new Map<string, Relationship>();
+  // Core data storage - now using GraphFoundation instead of Maps
+  private graphFoundation = new GraphFoundation();
+  private persistenceManager = new PersistenceManager();
+  
+  // Higher-level data structures that don't fit in the graph
   private experiences = new Map<string, Experience>();
   private strategies = new Map<string, Strategy>();
   private intuitions = new Map<string, Intuition>();
@@ -69,7 +73,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
         ...metadata,
       };
 
-      this.nodes.set(id, info);
+      this.graphFoundation.addNode(info);
       this.events.emit('information:afterAdd', info);
 
       return id;
@@ -77,32 +81,27 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
 
     get: (id: string): Information | null => {
       if (!isValidId(id)) return null;
-      return this.nodes.get(id) ?? null;
+      return this.graphFoundation.getNode(id);
     },
 
     update: (id: string, updates: Partial<Information>): boolean => {
       if (!isValidId(id)) return false;
 
-      const existing = this.nodes.get(id);
-      if (!existing) return false;
+      const success = this.graphFoundation.updateNode(id, updates);
+      if (success) {
+        const updated = this.graphFoundation.getNode(id);
+        if (updated) {
+          this.events.emit('information:afterUpdate', updated);
+        }
+      }
 
-      const updated: Information = {
-        ...existing,
-        ...updates,
-        id: existing.id, // Never allow ID changes
-        modified: new Date(),
-      };
-
-      this.nodes.set(id, updated);
-      this.events.emit('information:afterUpdate', updated);
-
-      return true;
+      return success;
     },
 
     delete: (id: string): boolean => {
       if (!isValidId(id)) return false;
 
-      const deleted = this.nodes.delete(id);
+      const deleted = this.graphFoundation.deleteNode(id);
       if (deleted) {
         // Clean up related data
         this.cleanupRelatedData(id);
@@ -118,7 +117,9 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       const normalizedQuery = query.toLowerCase();
       const results: Information[] = [];
 
-      for (const info of this.nodes.values()) {
+      const allNodes = this.graphFoundation.getAllNodes();
+      
+      for (const info of allNodes) {
         const content = contentToString(info.content).toLowerCase();
         const matches =
           content.includes(normalizedQuery) ||
@@ -206,7 +207,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
         throw new Error('Invalid node IDs');
       }
 
-      if (!this.nodes.has(from) || !this.nodes.has(to)) {
+      if (!this.graphFoundation.hasNode(from) || !this.graphFoundation.hasNode(to)) {
         throw new Error('One or both nodes do not exist');
       }
 
@@ -219,8 +220,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
         metadata: metadata ? (metadata as Record<string, unknown>) : undefined,
       };
 
-      const edgeId = `${from}->${to}:${type}`;
-      this.edges.set(edgeId, relationship);
+      this.graphFoundation.addEdge(relationship);
 
       this.events.emit('knowledge:afterConnect', relationship);
 
@@ -228,14 +228,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
     },
 
     disconnect: (from: string, to: string): boolean => {
-      let removed = false;
-
-      for (const [edgeId, edge] of this.edges.entries()) {
-        if (edge.from === from && edge.to === to) {
-          this.edges.delete(edgeId);
-          removed = true;
-        }
-      }
+      const removed = this.graphFoundation.deleteEdge(from, to);
 
       if (removed) {
         this.events.emit('knowledge:afterDisconnect', from, to);
@@ -248,128 +241,19 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       const dir = direction ?? 'both';
       if (!isValidId(nodeId)) return [];
 
-      const relationships: Relationship[] = [];
-
-      for (const edge of this.edges.values()) {
-        if (dir === 'both' || dir === 'out') {
-          if (edge.from === nodeId) {
-            relationships.push(deepClone(edge));
-          }
-        }
-
-        if (dir === 'both' || dir === 'in') {
-          if (edge.to === nodeId) {
-            relationships.push(deepClone(edge));
-          }
-        }
-      }
-
-      return relationships;
+      return this.graphFoundation.getNodeEdges(nodeId, dir);
     },
 
     findPaths: (from: string, to: string, maxDepth = 5): string[][] => {
-      if (!isValidId(from) || !isValidId(to)) return [];
-      if (from === to) return [[from]];
-
-      const paths: string[][] = [];
-      const visited = new Set<string>();
-
-      const dfs = (current: string, target: string, path: string[], depth: number): void => {
-        if (depth > maxDepth) return;
-        if (visited.has(current)) return;
-
-        visited.add(current);
-        path.push(current);
-
-        if (current === target) {
-          paths.push([...path]);
-        } else {
-          const outgoing = this.knowledge.getRelationships(current, 'out');
-          for (const edge of outgoing) {
-            dfs(edge.to, target, path, depth + 1);
-          }
-        }
-
-        path.pop();
-        visited.delete(current);
-      };
-
-      dfs(from, to, [], 0);
-      return paths;
+      return this.graphFoundation.findPaths(from, to, maxDepth);
     },
 
     getSubgraph: (nodeId: string, depth = 2): Knowledge[] => {
-      if (!isValidId(nodeId)) return [];
-
-      const visited = new Set<string>();
-      const result: Knowledge[] = [];
-
-      const explore = (currentId: string, currentDepth: number): void => {
-        if (currentDepth < 0 || visited.has(currentId)) return;
-
-        visited.add(currentId);
-        const node = this.nodes.get(currentId);
-        if (!node) return;
-
-        const edges = this.knowledge.getRelationships(currentId);
-        result.push({
-          node: deepClone(node),
-          edges: deepClone(edges),
-        });
-
-        // Explore connected nodes
-        for (const edge of edges) {
-          const nextId = edge.from === currentId ? edge.to : edge.from;
-          explore(nextId, currentDepth - 1);
-        }
-      };
-
-      explore(nodeId, depth);
-      return result;
+      return this.graphFoundation.getSubgraph(nodeId, depth);
     },
 
     cluster: (algorithm = 'community' as const): KnowledgeCluster[] => {
-      // Simplified clustering implementation
-      // In a full implementation, this would use proper graph clustering algorithms
-
-      const clusters: KnowledgeCluster[] = [];
-      const visited = new Set<string>();
-
-      for (const nodeId of this.nodes.keys()) {
-        if (visited.has(nodeId)) continue;
-
-        const cluster: KnowledgeCluster = {
-          id: generateId('cluster'),
-          nodes: [],
-          algorithm,
-          coherence: 0,
-        };
-
-        // Simple connected component clustering
-        const stack = [nodeId];
-        while (stack.length > 0) {
-          const current = stack.pop();
-          if (!current || visited.has(current)) continue;
-
-          visited.add(current);
-          cluster.nodes.push(current);
-
-          const edges = this.knowledge.getRelationships(current);
-          for (const edge of edges) {
-            const next = edge.from === current ? edge.to : edge.from;
-            if (!visited.has(next)) {
-              stack.push(next);
-            }
-          }
-        }
-
-        if (cluster.nodes.length > 0) {
-          cluster.coherence = cluster.nodes.length > 1 ? 0.8 : 1.0; // Simplified coherence
-          clusters.push(cluster);
-        }
-      }
-
-      return clusters;
+      return this.graphFoundation.clusterNodes(algorithm);
     },
   };
 
@@ -643,7 +527,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
   public readonly analyze = {
     extractKnowledge: (informationIds: string[]): Knowledge[] => {
       return informationIds
-        .map(id => this.nodes.get(id))
+        .map(id => this.graphFoundation.getNode(id))
         .filter((node): node is Information => node !== undefined)
         .map(node => ({
           node: deepClone(node),
@@ -774,6 +658,55 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
     },
   };
 
+  // ============ Persistence Methods ============
+
+  /**
+   * Save the knowledge database to a file
+   * @param filePath Path to save the data
+   */
+  async save(filePath: string): Promise<void> {
+    const graphData = this.graphFoundation.export();
+    
+    // Add higher-level data to metadata
+    graphData.metadata = {
+      ...graphData.metadata,
+      experienceCount: this.experiences.size,
+      strategyCount: this.strategies.size,
+      intuitionCount: this.intuitions.size,
+    };
+
+    await this.persistenceManager.saveWithBackup(graphData, filePath);
+  }
+
+  /**
+   * Load the knowledge database from a file
+   * @param filePath Path to load the data from
+   */
+  async load(filePath: string): Promise<void> {
+    const graphData = await this.persistenceManager.loadWithRecovery(filePath);
+    
+    // Import graph data
+    this.graphFoundation.import(graphData);
+    
+    // Note: For now, we only persist the graph data (nodes and edges)
+    // Higher-level data (experiences, strategies, intuitions) are kept in memory
+    // In a full implementation, these would also be persisted
+  }
+
+  /**
+   * Get graph foundation for advanced operations
+   */
+  getGraphFoundation(): GraphFoundation {
+    return this.graphFoundation;
+  }
+
+  /**
+   * Get persistence manager for advanced operations
+   */
+  getPersistenceManager(): PersistenceManager {
+    return this.persistenceManager;
+  }
+
   // ============ Private Helper Methods ============
 
   private setupEventSystem(): void {
@@ -785,12 +718,8 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
   }
 
   private cleanupRelatedData(nodeId: string): void {
-    // Remove edges connected to this node
-    for (const [edgeId, edge] of this.edges.entries()) {
-      if (edge.from === nodeId || edge.to === nodeId) {
-        this.edges.delete(edgeId);
-      }
-    }
+    // GraphFoundation automatically handles edge cleanup when nodes are deleted
+    // We only need to clean up higher-level data structures
 
     // Remove experiences that include this node
     for (const [expId, experience] of this.experiences.entries()) {
