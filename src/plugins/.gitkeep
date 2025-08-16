@@ -1,0 +1,11 @@
+# Plugins Directory
+
+This directory will contain plugin implementations for enhancing each knowledge level:
+
+- Information Level Plugins: LLM processing, entity extraction, embeddings
+- Knowledge Level Plugins: Semantic linking, graph algorithms
+- Experience Level Plugins: Learning engines, pattern detection  
+- Strategy Level Plugins: Path optimization, goal planning
+- Intuition Level Plugins: Pattern crystallization, fast retrieval
+
+Plugin implementations will be added in Phase 5 (T9.1-T10.4)

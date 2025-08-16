@@ -1,0 +1,8 @@
+# MCP Server Tests Directory
+
+This directory will contain tests for the MCP server implementation:
+
+- server.test.ts: MCP server functionality tests
+- tools.test.ts: MCP tool integration tests
+
+Tests will be implemented in Phase 6 (T11.1-T11.4)

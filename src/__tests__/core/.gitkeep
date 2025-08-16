@@ -1,0 +1,9 @@
+# Core Tests Directory
+
+This directory will contain tests for the core Knowledge Database implementation:
+
+- KnowraCore.test.ts: Main API tests
+- types.test.ts: Type validation tests  
+- utils.test.ts: Utility function tests
+
+Tests will be implemented following TDD methodology starting with T1.2

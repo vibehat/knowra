@@ -1,0 +1,9 @@
+# Plugin Tests Directory
+
+This directory will contain tests for plugin implementations:
+
+- Plugin system tests
+- Individual plugin functionality tests
+- Plugin integration tests
+
+Tests will be implemented in Phase 5 (T9.1-T10.4)
