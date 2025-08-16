@@ -31,6 +31,7 @@ import type {
 import { generateId, isValidId, deepClone, contentToString, validateConfidence } from './utils.js';
 import { GraphFoundation } from './GraphFoundation.js';
 import { PersistenceManager } from './PersistenceManager.js';
+import { TextSearchManager } from './TextSearchManager.js';
 
 /**
  * Core implementation of the Knowra Knowledge Database
@@ -40,6 +41,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
   // Core data storage - now using GraphFoundation instead of Maps
   private graphFoundation = new GraphFoundation();
   private persistenceManager = new PersistenceManager();
+  private textSearchManager = new TextSearchManager();
   
   // Higher-level data structures that don't fit in the graph
   private experiences = new Map<string, Experience>();
@@ -74,6 +76,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       };
 
       this.graphFoundation.addNode(info);
+      this.textSearchManager.addNode(info);
       this.events.emit('information:afterAdd', info);
 
       return id;
@@ -91,6 +94,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       if (success) {
         const updated = this.graphFoundation.getNode(id);
         if (updated) {
+          this.textSearchManager.updateNode(updated);
           this.events.emit('information:afterUpdate', updated);
         }
       }
@@ -104,6 +108,7 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
       const deleted = this.graphFoundation.deleteNode(id);
       if (deleted) {
         // Clean up related data
+        this.textSearchManager.removeNode(id);
         this.cleanupRelatedData(id);
         this.events.emit('information:afterDelete', id);
       }
@@ -114,44 +119,8 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
     search: (query: string, options?: SearchOptions): Information[] => {
       if (!query.trim()) return [];
 
-      const normalizedQuery = query.toLowerCase();
-      const results: Information[] = [];
-
-      const allNodes = this.graphFoundation.getAllNodes();
-      
-      for (const info of allNodes) {
-        const content = contentToString(info.content).toLowerCase();
-        const matches =
-          content.includes(normalizedQuery) ||
-          info.type.toLowerCase().includes(normalizedQuery) ||
-          (info.source?.toLowerCase().includes(normalizedQuery) ?? false);
-
-        if (matches) {
-          // Apply filters
-          if (options?.type && info.type !== options.type) continue;
-
-          results.push(deepClone(info));
-        }
-      }
-
-      // Sort results
-      if (options?.sortBy === 'created') {
-        results.sort((a, b) => {
-          const order = options.sortOrder === 'desc' ? -1 : 1;
-          return order * (a.created.getTime() - b.created.getTime());
-        });
-      } else if (options?.sortBy === 'modified') {
-        results.sort((a, b) => {
-          const order = options.sortOrder === 'desc' ? -1 : 1;
-          return order * (a.modified.getTime() - b.modified.getTime());
-        });
-      }
-
-      // Apply pagination
-      const start = options?.offset ?? 0;
-      const end = options?.limit ? start + options.limit : undefined;
-
-      return results.slice(start, end);
+      // Use FlexSearch for better search performance and accuracy
+      return this.textSearchManager.search(query, options);
     },
 
     batch: (operations: InfoOperation[]): BatchResult => {
@@ -688,6 +657,9 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
     // Import graph data
     this.graphFoundation.import(graphData);
     
+    // Rebuild search indexes
+    this.rebuildSearchIndex();
+    
     // Note: For now, we only persist the graph data (nodes and edges)
     // Higher-level data (experiences, strategies, intuitions) are kept in memory
     // In a full implementation, these would also be persisted
@@ -705,6 +677,27 @@ export class KnowraCore implements KnowledgeDatabaseAPI {
    */
   getPersistenceManager(): PersistenceManager {
     return this.persistenceManager;
+  }
+
+  /**
+   * Get text search manager for advanced operations
+   */
+  getTextSearchManager(): TextSearchManager {
+    return this.textSearchManager;
+  }
+
+  /**
+   * Rebuild the text search index from all current nodes
+   */
+  private rebuildSearchIndex(): void {
+    // Clear existing index
+    this.textSearchManager.clear();
+    
+    // Add all nodes to the search index
+    const allNodes = this.graphFoundation.getAllNodes();
+    for (const node of allNodes) {
+      this.textSearchManager.addNode(node);
+    }
   }
 
   // ============ Private Helper Methods ============
