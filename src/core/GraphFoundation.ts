@@ -21,6 +21,12 @@ import type {
   KnowledgeCluster,
   GraphData,
   NodeMetrics,
+  GraphMetrics,
+  StructuralAnalysis,
+  StructuralImportance,
+  CentralNode,
+  CommunityDetectionOptions,
+  SimilarityClusteringOptions,
 } from './types.js';
 import {
   validateInformation,
@@ -28,6 +34,9 @@ import {
   validateGraphData,
 } from './types.js';
 import { generateId, isValidId, deepClone, validateConfidence } from './utils.js';
+import { LouvainCommunity } from './algorithms/LouvainCommunity.js';
+import { SimilarityClustering } from './algorithms/SimilarityClustering.js';
+import { GraphMetrics as GraphMetricsCalculator } from './algorithms/GraphMetrics.js';
 
 /**
  * GraphFoundation wraps Graphology with Knowledge Database specific functionality
@@ -510,9 +519,33 @@ export class GraphFoundation {
 
     switch (algorithm) {
       case 'community':
-        return this.detectCommunities();
+        return this.detectCommunitiesWithLouvain();
       case 'similarity':
-        return this.clusterBySimilarity();
+        return this.clusterBySimilarityAlgorithm();
+      default:
+        throw new Error(`Unsupported clustering algorithm: ${algorithm}`);
+    }
+  }
+
+  /**
+   * Detect communities/clusters with options
+   * @param algorithm Clustering algorithm ('community' or 'similarity')
+   * @param options Algorithm-specific options
+   * @returns Array of KnowledgeCluster objects
+   */
+  clusterWithOptions(
+    algorithm: 'community' | 'similarity',
+    options?: CommunityDetectionOptions | SimilarityClusteringOptions
+  ): KnowledgeCluster[] {
+    if (this.graph.order === 0) {
+      return [];
+    }
+
+    switch (algorithm) {
+      case 'community':
+        return this.detectCommunitiesWithLouvain(options as CommunityDetectionOptions);
+      case 'similarity':
+        return this.clusterBySimilarityAlgorithm(options as SimilarityClusteringOptions);
       default:
         throw new Error(`Unsupported clustering algorithm: ${algorithm}`);
     }
@@ -556,20 +589,81 @@ export class GraphFoundation {
   }
 
   /**
-   * Calculate metrics for a specific node
+   * Calculate comprehensive metrics for a specific node
    * @param nodeId Node ID
-   * @returns NodeMetrics object
+   * @returns Enhanced NodeMetrics object
    */
   calculateNodeMetrics(nodeId: string): NodeMetrics {
     if (!isValidId(nodeId) || !this.graph.hasNode(nodeId)) {
-      return { degree: 0, betweenness: 0, closeness: 0 };
+      return { 
+        degree: 0, 
+        betweenness: 0, 
+        closeness: 0,
+        pageRank: 0,
+        eigenvectorCentrality: 0,
+        clusteringCoefficient: 0,
+      };
     }
 
-    const degree = this.graph.degree(nodeId);
-    const betweenness = this.calculateBetweennessCentrality(nodeId);
-    const closeness = this.calculateClosenessCentrality(nodeId);
+    // Use the new GraphMetricsCalculator for comprehensive analysis
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    const calculator = new GraphMetricsCalculator(nodes, edges);
+    
+    return calculator.calculateNodeMetrics(nodeId);
+  }
 
-    return { degree, betweenness, closeness };
+  /**
+   * Calculate graph-level metrics
+   * @returns GraphMetrics object
+   */
+  getGraphMetrics(): GraphMetrics {
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    const calculator = new GraphMetricsCalculator(nodes, edges);
+    
+    return calculator.calculateGraphMetrics();
+  }
+
+  /**
+   * Analyze structural properties of the graph
+   * @returns StructuralAnalysis object
+   */
+  analyzeStructure(): StructuralAnalysis {
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    const calculator = new GraphMetricsCalculator(nodes, edges);
+    
+    return calculator.analyzeStructure();
+  }
+
+  /**
+   * Get structural importance analysis
+   * @returns StructuralImportance object
+   */
+  getStructuralImportance(): StructuralImportance {
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    const calculator = new GraphMetricsCalculator(nodes, edges);
+    
+    return calculator.getStructuralImportance();
+  }
+
+  /**
+   * Find most central nodes
+   * @param count Number of nodes to return
+   * @param centralityType Type of centrality measure
+   * @returns Array of central nodes
+   */
+  findCentralNodes(
+    count: number = 5,
+    centralityType: 'degree' | 'betweenness' | 'closeness' | 'pagerank' | 'eigenvector' = 'pagerank'
+  ): CentralNode[] {
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    const calculator = new GraphMetricsCalculator(nodes, edges);
+    
+    return calculator.findCentralNodes(count, centralityType);
   }
 
   // ============ Data Import/Export ============
@@ -602,6 +696,19 @@ export class GraphFoundation {
         edgeCount: edges.length,
       },
     };
+  }
+
+
+  /**
+   * Get all edges as Relationship array (for algorithm use)
+   * @returns Array of Relationship objects
+   */
+  getAllEdges(): Relationship[] {
+    const edges: Relationship[] = [];
+    this.graph.forEachEdge((edge, attributes) => {
+      edges.push(deepClone(attributes));
+    });
+    return edges;
   }
 
   /**
@@ -705,33 +812,38 @@ export class GraphFoundation {
   }
 
   /**
-   * Detect communities using a simple connected components approach
-   * In a full implementation, this would use more sophisticated algorithms like Louvain
+   * Detect communities using Louvain algorithm
+   * @param options Optional community detection parameters
+   * @returns Array of detected communities
    */
-  private detectCommunities(): KnowledgeCluster[] {
-    const components = this.getConnectedComponents();
-    return components.map((component, index) => {
-      const coherence = this.calculateComponentCoherence(component);
-      return {
-        id: generateId('cluster'),
-        nodes: component,
-        algorithm: 'community' as const,
-        coherence,
-      };
-    });
+  private detectCommunitiesWithLouvain(options?: CommunityDetectionOptions): KnowledgeCluster[] {
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    
+    if (nodes.length === 0) return [];
+    
+    // Use Louvain community detection
+    const louvain = new LouvainCommunity(options);
+    const clusters = louvain.detectCommunities(nodes, edges);
+    
+    return clusters;
   }
 
   /**
-   * Cluster by similarity (simplified implementation)
-   * In a full implementation, this would use advanced similarity metrics
+   * Cluster by content similarity
+   * @param options Optional similarity clustering parameters
+   * @returns Array of similarity-based clusters
    */
-  private clusterBySimilarity(): KnowledgeCluster[] {
-    // For now, use the same logic as community detection
-    // A full implementation would analyze node content similarity
-    return this.detectCommunities().map(cluster => ({
-      ...cluster,
-      algorithm: 'similarity' as const,
-    }));
+  private clusterBySimilarityAlgorithm(options?: SimilarityClusteringOptions): KnowledgeCluster[] {
+    const nodes = this.getAllNodes();
+    
+    if (nodes.length === 0) return [];
+    
+    // Use similarity-based clustering
+    const similarityClustering = new SimilarityClustering(options);
+    const clusters = similarityClustering.clusterBySimilarity(nodes);
+    
+    return clusters;
   }
 
   /**

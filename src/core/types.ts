@@ -83,6 +83,72 @@ export interface KnowledgeCluster {
   centroid?: string; // Central node ID
   coherence: number; // How tightly connected (0-1)
   algorithm: 'community' | 'similarity';
+  modularity?: number; // Modularity score for community detection
+  avgSimilarity?: number; // Average similarity for similarity clustering
+}
+
+/**
+ * Options for community detection algorithms
+ */
+export interface CommunityDetectionOptions {
+  resolution?: number; // Resolution parameter for modularity optimization
+  minCommunitySize?: number; // Minimum nodes per community
+  maxIterations?: number; // Maximum iterations for optimization
+  randomSeed?: number; // Seed for reproducible results
+}
+
+/**
+ * Options for similarity-based clustering
+ */
+export interface SimilarityClusteringOptions {
+  threshold?: number; // Similarity threshold (0-1)
+  method?: 'jaccard' | 'cosine' | 'dice'; // Similarity calculation method
+  considerType?: boolean; // Whether to consider node type in clustering
+  weights?: {
+    content?: number; // Weight for content similarity
+    type?: number; // Weight for type similarity
+    metadata?: number; // Weight for metadata similarity
+  };
+}
+
+/**
+ * Graph-level metrics and analysis results
+ */
+export interface GraphMetrics {
+  density: number; // Graph density (0-1)
+  averagePathLength: number; // Average shortest path length
+  diameter: number; // Graph diameter (longest shortest path)
+  clusteringCoefficient: number; // Global clustering coefficient
+  modularity?: number; // Modularity of current community structure
+  componentCount: number; // Number of connected components
+}
+
+/**
+ * Structural analysis of the graph
+ */
+export interface StructuralAnalysis {
+  hasSmallWorldProperty: boolean; // Whether graph exhibits small-world properties
+  isScaleFree: boolean; // Whether graph follows power-law degree distribution
+  communityStructureStrength: number; // Strength of community structure
+  bridgeNodes: string[]; // Nodes that bridge different communities
+}
+
+/**
+ * Structural importance of nodes and edges
+ */
+export interface StructuralImportance {
+  bridges: Array<{ from: string; to: string; importance: number }>; // Bridge edges
+  articulationPoints: Array<{ id: string; importance: number }>; // Critical nodes
+  hubs: Array<{ id: string; degree: number; importance: number }>; // High-degree nodes
+}
+
+/**
+ * Central nodes with their centrality scores
+ */
+export interface CentralNode {
+  id: string;
+  centralityScore: number;
+  centralityType: 'degree' | 'betweenness' | 'closeness' | 'pagerank' | 'eigenvector';
 }
 
 // ============ Level 3: Experience Types ============
@@ -603,6 +669,8 @@ export interface NodeMetrics {
   betweenness: number;
   closeness: number;
   pageRank?: number;
+  eigenvectorCentrality?: number; // Eigenvector centrality score
+  clusteringCoefficient?: number; // Local clustering coefficient
 }
 
 /**
@@ -649,6 +717,8 @@ export const NodeMetricsSchema = z.object({
   betweenness: z.number().nonnegative(),
   closeness: z.number().nonnegative(),
   pageRank: z.number().nonnegative().optional(),
+  eigenvectorCentrality: z.number().nonnegative().optional(),
+  clusteringCoefficient: z.number().nonnegative().optional(),
 });
 
 /**

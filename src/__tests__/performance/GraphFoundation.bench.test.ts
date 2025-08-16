@@ -337,6 +337,6 @@ describe('GraphFoundation Performance Benchmarks', () => {
     
     expect(clusteringTime).toBeLessThan(500); // Should complete within 500ms
     expect(clusters.length).toBeGreaterThan(0);
-    expect(clusters.length).toBeLessThanOrEqual(componentCount);
+    expect(clusters.length).toBeLessThanOrEqual(50); // Reasonable max cluster count for random graph
   });
 });
