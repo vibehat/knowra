@@ -1,473 +1,1151 @@
-# Technical Proposal: Knowra Knowledge Graph Implementation
+# Technical Proposal: Knowra Knowledge Graph Implementation (Simplified with Intelligence)
 
-> A simple and effective approach to building a human-like knowledge graph system using proven TypeScript/JavaScript libraries
+> A practical knowledge graph with built-in LLM intelligence
 
 ## Executive Summary
 
-This document proposes a practical technical architecture for implementing the Knowra knowledge graph system as described in `graph-knowledge.md`. The approach prioritizes simplicity, effectiveness, and leveraging existing mature libraries rather than building from scratch.
+Build a minimal yet intelligent knowledge graph system that:
+- Encodes information into knowledge using LLMs (OpenAI API)
+- Provides semantic search using embeddings
+- Tracks experience through graph paths
+- Manages knowledge as subgraphs
+- Supports parallel exploration for context building
+- Has a simple plugin system for progressive enhancement
+- Integrates with Claude Code via MCP
 
-**Core Vision**: Build a 5-stage knowledge evolution system (Information → Knowledge → Experience → Strategy → Intuition) that mirrors human cognition using modern TypeScript/JavaScript ecosystem.
+**Simple architecture, intelligent capabilities. Focus on practical LLM integration for real-world use.**
 
-**Key Principle**: Start simple with MVP, then evolve complexity only when needed.
+## Layer Architecture
 
-## Architecture Overview
-
-```typescript
-┌─────────────────────────────────────────────────────────────────┐
-│                    Natural Language Interface                   │
-│                     (LLM Integration)                          │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────────┐
-│                   Knowledge Graph Engine                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │   Graphology │  │  Temporal   │  │    Vector Embeddings   │ │
-│  │   (Core      │◄─┤   Navigation│◄─┤    (ChromaDB/Local)    │ │
-│  │    Graph)    │  │             │  │                         │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
-└─────────────────────┬───────────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────────┐
-│                   Storage Layer                                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │   LevelGraph │  │  In-Memory  │  │    File System          │ │
-│  │   (Persist)  │◄─┤   Cache     │◄─┤    (JSON Backup)       │ │
-│  │             │  │  (Fast)     │  │                         │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+```
+┌──────────────────────────────────────────────────┐
+│              Top Layer                           │
+│   CLI Interface | Claude Code Interface          │
+│        (User Interaction Layer)                  │
+└────────────────┬─────────────────────────────────┘
+                 │
+┌────────────────▼─────────────────────────────────┐
+│          Plugin System Layer                     │
+│  ┌─────────┐ ┌──────────┐ ┌────────────┐       │
+│  │   MCP   │ │   CLI    │ │    GUI     │       │
+│  │ Server  │ │  Tools   │ │  Explorer  │       │
+│  └─────────┘ └──────────┘ └────────────┘       │
+│         (Extensible Plugin Architecture)         │
+└────────────────┬─────────────────────────────────┘
+                 │
+┌────────────────▼─────────────────────────────────┐
+│            Knowra Core Layer                     │
+│                                                  │
+│  Core API Functions:                             │
+│  ┌────────────────────────────────────────────┐ │
+│  │ • Encode: Text → Knowledge (via LLM)       │ │
+│  │ • Index: Tags, Categories, Embeddings      │ │
+│  │ • Search: Semantic + Text (Hybrid)         │ │
+│  │ • Experience: Path Tracking & Learning     │ │
+│  │ • Knowledge: Subgraph Operations           │ │
+│  │ • Context: Parallel Exploration            │ │
+│  └────────────────────────────────────────────┘ │
+│                                                  │
+│  Data Structures:                                │
+│  • Information (Nodes with embeddings)           │
+│  • Experience (Paths through graph)              │
+│  • Knowledge (Subgraphs with context)            │
+└──────────────────────────────────────────────────┘
 ```
 
-## Technology Stack Recommendations
+## Technology Stack
 
-Based on extensive research, here are the optimal library choices:
-
-### 1. Core Graph Engine: Graphology
-```typescript
-npm install graphology graphology-types
+### Core Dependencies (Minimal but Intelligent)
+```json
+{
+  "dependencies": {
+    "graphology": "^0.25.0",           // Graph operations
+    "flexsearch": "^0.7.31",           // Text search
+    "openai": "^4.0.0",                // LLM integration for encoding & embeddings
+    "@modelcontextprotocol/sdk": "^0.5.0", // MCP integration
+    "zod": "^3.22.0",                  // Schema validation
+    "p-queue": "^7.4.0"                // Parallel operations management
+  }
+}
 ```
 
-**Why Graphology?**
-- TypeScript-native with excellent type definitions
-- Lightweight and modern (not bloated like older alternatives)
-- Tight integration with Sigma.js for visualization
-- Efficient algorithms library ecosystem
-- Active maintenance and community
+Minimal dependencies with maximum intelligence. OpenAI API provides both text understanding and semantic search capabilities.
+
+## Core Implementation
+
+### 1. KnowraCore - The Entire System
 
 ```typescript
 import Graph from 'graphology';
-import {Attributes} from 'graphology-types';
+import FlexSearch from 'flexsearch';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 
-interface NodeAttributes {
-  content: string;
-  type: 'fact' | 'insight' | 'pattern' | 'experience';
-  strength: number; // 0-1
+interface Node {
+  id: string;
+  content: any;
+  type?: string;
+  tags?: string[];
+  category?: string;
+  embedding?: number[];  // Vector for semantic search
+  summary?: string;      // LLM-generated summary
   created: Date;
-  accessed: Date;
-  stage: 1 | 2 | 3 | 4 | 5; // Information → Intuition
+  modified: Date;
+  accessed?: Date;       // For experience tracking
+  accessCount?: number;  // Usage patterns
 }
 
-interface EdgeAttributes {
-  type: 'causes' | 'enables' | 'similar' | 'contradicts' | 'part_of';
-  strength: number; // 0-1
-  evidence: string;
-  confidence: number; // 0-1
-  formed: Date;
-  reinforcement: number; // usage count
+interface Edge {
+  from: string;
+  to: string;
+  type: string;
+  strength?: number;     // Connection strength
+  metadata?: Record<string, any>;
+  created?: Date;
+  lastTraversed?: Date;  // For experience tracking
 }
-```
 
-### 2. Persistent Storage: LevelGraph
-```typescript
-npm install levelgraph
-```
-
-**Why LevelGraph?**
-- Built on LevelDB (ultra-fast key-value store)
-- Works in Node.js and browsers (IndexedDB)
-- Follows Hexastore approach (6 indices per triple)
-- Proven in production environments
-- Simple RDF-like triple store interface
-
-### 3. Vector Embeddings: ChromaDB
-```typescript
-npm install chromadb
-```
-
-**Why ChromaDB?**
-- Simple setup and usage
-- Excellent TypeScript support
-- Fast similarity search algorithms
-- Local deployment (no external dependencies)
-- Perfect for semantic connection discovery
-
-### 4. LLM Integration: OpenAI/Anthropic APIs
-```typescript
-npm install openai @anthropic-ai/sdk
-```
-
-**Why Multi-Provider?**
-- Flexibility to choose best model for each task
-- Cost optimization options
-- Fallback capabilities
-
-### 5. Visualization (Optional): Sigma.js + Graphology
-```typescript
-npm install sigma graphology-layout-forceatlas2
-```
-
-**Why Sigma.js?**
-- Native Graphology integration
-- High-performance WebGL rendering
-- Excellent for large graphs (10k+ nodes)
-- Rich interaction capabilities
-
-## Core Components Design
-
-### 1. KnowraGraph - Main Engine
-
-```typescript
-export class KnowraGraph {
-  private graph: Graph<NodeAttributes, EdgeAttributes>;
-  private storage: LevelGraphStorage;
-  private vectorStore: ChromaVectorStore;
-  private llm: LLMProvider;
-  private temporal: TemporalNavigator;
-
-  // Core Methods
-  async learn(content: string, options?: LearnOptions): Promise<string>;
-  async connect(fromId: string, toId: string, relationship: EdgeAttributes): Promise<void>;
-  async ask(query: string): Promise<KnowledgeResult>;
-  async summarize(options: SummarizeOptions): Promise<Summary>;
-  
-  // Stage-specific operations
-  async getStageOperations(stage: 1 | 2 | 3 | 4 | 5): Promise<StageOperations>;
-}
-```
-
-### 2. Stage Progression System
-
-```typescript
-class StageManager {
-  // Automatically evolve nodes through stages based on usage patterns
-  evolveNode(nodeId: string): Promise<void>;
-  
-  // Stage-specific summarization
-  summarizeByStage(stage: number, context: string): Promise<Summary>;
-  
-  // Pattern detection across stages
-  detectPatterns(timeframe?: TimeRange): Promise<Pattern[]>;
-}
-```
-
-### 3. Temporal Navigation
-
-```typescript
-class TemporalNavigator {
-  // Time-based queries
-  async getKnowledgeAt(timestamp: Date): Promise<GraphSnapshot>;
-  async getPathHistory(nodeId: string): Promise<PathEvolution[]>;
-  async getDecisionHistory(context: string): Promise<DecisionPath[]>;
-  
-  // Knowledge decay
-  applyTemporalDecay(decayRate: number): Promise<void>;
-}
-```
-
-### 4. Natural Language Processor
-
-```typescript
-class NLProcessor {
-  // Convert natural language to graph operations
-  async parseIntent(input: string): Promise<GraphOperation>;
-  
-  // Extract entities and relationships
-  async extractKnowledge(text: string): Promise<KnowledgeExtraction>;
-  
-  // Generate natural responses
-  async synthesizeResponse(graphData: any): Promise<string>;
-}
-```
-
-## Data Models and Schemas
-
-### Node Schema
-```typescript
-interface KnowledgeNode {
+interface Experience {
   id: string;
-  content: string;
-  type: 'fact' | 'insight' | 'pattern' | 'experience' | 'wisdom';
-  strength: number; // 0-1, importance weight
-  stage: 1 | 2 | 3 | 4 | 5; // Evolution stage
-  temporal: {
-    created: Date;
-    lastAccessed: Date;
-    accessCount: number;
-    decayRate: number;
-  };
-  context: {
-    source: string;
-    project?: string;
-    tags: string[];
-  };
-  embeddings?: number[]; // Vector representation for semantic search
+  path: string[];        // Sequence of node IDs
+  context: string;       // What was learned
+  timestamp: Date;
+  success?: boolean;     // Was the exploration successful?
 }
-```
 
-### Edge Schema
-```typescript
-interface KnowledgeEdge {
+interface Knowledge {
   id: string;
-  source: string;
-  target: string;
-  type: 'causes' | 'enables' | 'similar' | 'contradicts' | 'part_of' | 'improves' | 'triggers';
-  strength: number; // 0-1, relationship weight
-  evidence: string; // Supporting information
-  confidence: number; // 0-1, certainty of relationship
-  temporal: {
-    formed: Date;
-    reinforcement: number; // Number of times this path was traversed
-    lastTraversed: Date;
-  };
-  metadata: {
-    automatic: boolean; // Created by AI vs manual
-    validated: boolean; // Human confirmed
-  };
+  nodes: string[];       // Node IDs in this knowledge chunk
+  edges: Edge[];         // Relationships within the chunk
+  summary: string;       // LLM-generated summary of the subgraph
+  domain?: string;       // Knowledge domain/category
+}
+
+export class KnowraCore {
+  private graph: Graph;
+  private searchIndex: FlexSearch.Index;
+  private dataPath: string;
+  private plugins: Map<string, Plugin> = new Map();
+  private experiences: Map<string, Experience> = new Map();
+  private knowledgeChunks: Map<string, Knowledge> = new Map();
+  private openai: OpenAI | null = null;
+  private embeddings: Map<string, number[]> = new Map();
+  private queue: PQueue;
+
+  constructor(dataPath = './knowra-data.json', openaiKey?: string) {
+    this.dataPath = dataPath;
+    this.graph = new Graph();
+    this.searchIndex = new FlexSearch.Index({
+      tokenize: 'forward',
+      resolution: 9
+    });
+    
+    // Initialize OpenAI if key provided
+    if (openaiKey) {
+      this.openai = new OpenAI({ apiKey: openaiKey });
+    }
+    
+    // Queue for parallel operations
+    this.queue = new PQueue({ concurrency: 5 });
+    
+    this.load();
+  }
+
+  // === INTELLIGENT ENCODING ===
+  
+  async encodeInformation(text: string, metadata?: Partial<Node>): Promise<string> {
+    // Use LLM to understand and structure the information
+    if (this.openai) {
+      try {
+        // Generate embedding for semantic search
+        const embeddingResponse = await this.openai.embeddings.create({
+          model: 'text-embedding-3-small',
+          input: text
+        });
+        const embedding = embeddingResponse.data[0].embedding;
+        
+        // Extract key information using LLM
+        const completion = await this.openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            {
+              role: 'system',
+              content: 'Extract and structure key information from the text. Return JSON with: summary (brief summary), tags (array of relevant tags), category (main category), entities (key entities mentioned).'
+            },
+            { role: 'user', content: text }
+          ],
+          response_format: { type: 'json_object' }
+        });
+        
+        const extracted = JSON.parse(completion.choices[0].message.content || '{}');
+        
+        // Create enriched node
+        return this.addNode({
+          original: text,
+          ...extracted
+        }, {
+          ...metadata,
+          embedding,
+          summary: extracted.summary,
+          tags: extracted.tags || metadata?.tags,
+          category: extracted.category || metadata?.category
+        });
+      } catch (error) {
+        console.error('LLM encoding failed, falling back to basic storage:', error);
+      }
+    }
+    
+    // Fallback to basic storage
+    return this.addNode(text, metadata);
+  }
+  
+  // === CORE OPERATIONS ===
+  
+  addNode(content: any, metadata?: Partial<Node>): string {
+    const id = metadata?.id || `node_${Date.now()}_${Math.random()}`;
+    const node: Node = {
+      id,
+      content,
+      type: metadata?.type || 'knowledge',
+      tags: metadata?.tags || [],
+      created: new Date(),
+      modified: new Date()
+    };
+    
+    this.graph.addNode(id, node);
+    
+    // Index for search
+    if (typeof content === 'string') {
+      this.searchIndex.add(id, content);
+    } else if (content?.text) {
+      this.searchIndex.add(id, content.text);
+    }
+    
+    this.save();
+    return id;
+  }
+
+  getNode(id: string): Node | null {
+    if (!this.graph.hasNode(id)) return null;
+    return this.graph.getNodeAttributes(id) as Node;
+  }
+
+  updateNode(id: string, content: any, metadata?: Partial<Node>): boolean {
+    if (!this.graph.hasNode(id)) return false;
+    
+    const existing = this.graph.getNodeAttributes(id) as Node;
+    const updated: Node = {
+      ...existing,
+      ...metadata,
+      content,
+      modified: new Date()
+    };
+    
+    this.graph.setNodeAttributes(id, updated);
+    
+    // Update search index
+    this.searchIndex.remove(id);
+    if (typeof content === 'string') {
+      this.searchIndex.add(id, content);
+    } else if (content?.text) {
+      this.searchIndex.add(id, content.text);
+    }
+    
+    this.save();
+    return true;
+  }
+
+  deleteNode(id: string): boolean {
+    if (!this.graph.hasNode(id)) return false;
+    this.graph.dropNode(id);
+    this.searchIndex.remove(id);
+    this.save();
+    return true;
+  }
+
+  // === RELATIONSHIPS ===
+  
+  addEdge(from: string, to: string, type: string, metadata?: Record<string, any>): boolean {
+    if (!this.graph.hasNode(from) || !this.graph.hasNode(to)) return false;
+    
+    this.graph.addEdge(from, to, {
+      type,
+      metadata: metadata || {},
+      created: new Date()
+    });
+    
+    this.save();
+    return true;
+  }
+
+  getEdges(nodeId: string): Edge[] {
+    const edges: Edge[] = [];
+    
+    // Outgoing edges
+    this.graph.forEachOutEdge(nodeId, (edge, attrs, source, target) => {
+      edges.push({
+        from: source,
+        to: target,
+        type: attrs.type,
+        metadata: attrs.metadata
+      });
+    });
+    
+    // Incoming edges
+    this.graph.forEachInEdge(nodeId, (edge, attrs, source, target) => {
+      edges.push({
+        from: source,
+        to: target,
+        type: attrs.type,
+        metadata: attrs.metadata
+      });
+    });
+    
+    return edges;
+  }
+
+  // === SEMANTIC SEARCH ===
+  
+  async semanticSearch(query: string, limit = 10): Promise<Node[]> {
+    if (!this.openai) {
+      // Fallback to text search
+      return this.search(query, limit);
+    }
+    
+    try {
+      // Get query embedding
+      const embeddingResponse = await this.openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: query
+      });
+      const queryEmbedding = embeddingResponse.data[0].embedding;
+      
+      // Calculate similarities
+      const similarities: Array<{ id: string; similarity: number }> = [];
+      
+      this.graph.forEachNode((id, attrs) => {
+        const node = attrs as Node;
+        if (node.embedding) {
+          const similarity = this.cosineSimilarity(queryEmbedding, node.embedding);
+          similarities.push({ id, similarity });
+        }
+      });
+      
+      // Sort by similarity and get top results
+      similarities.sort((a, b) => b.similarity - a.similarity);
+      
+      const semanticResults = similarities
+        .slice(0, limit)
+        .map(({ id }) => this.getNode(id))
+        .filter(node => node !== null) as Node[];
+      
+      // Hybrid approach: combine with text search
+      const textResults = this.search(query, limit);
+      
+      // Merge and deduplicate
+      const merged = new Map<string, Node>();
+      semanticResults.forEach(node => merged.set(node.id, node));
+      textResults.forEach(node => merged.set(node.id, node));
+      
+      return Array.from(merged.values()).slice(0, limit);
+    } catch (error) {
+      console.error('Semantic search failed, falling back to text search:', error);
+      return this.search(query, limit);
+    }
+  }
+  
+  private cosineSimilarity(a: number[], b: number[]): number {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+    
+    for (let i = 0; i < a.length; i++) {
+      dotProduct += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+  
+  // === BASIC SEARCH (kept for fallback) ===
+  
+  search(query: string, limit = 10): Node[] {
+    const results = this.searchIndex.search(query, { limit });
+    return results
+      .map(id => this.getNode(id as string))
+      .filter(node => node !== null) as Node[];
+  }
+
+  searchByTag(tag: string): Node[] {
+    const results: Node[] = [];
+    this.graph.forEachNode((id, attrs) => {
+      const node = attrs as Node;
+      if (node.tags?.includes(tag)) {
+        results.push(node);
+      }
+    });
+    return results;
+  }
+
+  searchByType(type: string): Node[] {
+    const results: Node[] = [];
+    this.graph.forEachNode((id, attrs) => {
+      const node = attrs as Node;
+      if (node.type === type) {
+        results.push(node);
+      }
+    });
+    return results;
+  }
+
+  // === EXPERIENCE TRACKING ===
+  
+  trackExperience(path: string[], context: string, success = true): string {
+    const experienceId = `exp_${Date.now()}`;
+    const experience: Experience = {
+      id: experienceId,
+      path,
+      context,
+      timestamp: new Date(),
+      success
+    };
+    
+    this.experiences.set(experienceId, experience);
+    
+    // Update access patterns
+    path.forEach(nodeId => {
+      const node = this.getNode(nodeId);
+      if (node) {
+        node.accessed = new Date();
+        node.accessCount = (node.accessCount || 0) + 1;
+        this.updateNode(nodeId, node.content, node);
+      }
+    });
+    
+    // Strengthen connections along successful paths
+    if (success) {
+      for (let i = 0; i < path.length - 1; i++) {
+        const edges = this.graph.edges(path[i], path[i + 1]);
+        edges.forEach(edge => {
+          const attrs = this.graph.getEdgeAttributes(edge);
+          attrs.strength = (attrs.strength || 1) * 1.1;
+          attrs.lastTraversed = new Date();
+          this.graph.setEdgeAttributes(edge, attrs);
+        });
+      }
+    }
+    
+    this.save();
+    return experienceId;
+  }
+  
+  getRelevantExperiences(nodeId: string, limit = 5): Experience[] {
+    const relevant: Experience[] = [];
+    
+    this.experiences.forEach(exp => {
+      if (exp.path.includes(nodeId)) {
+        relevant.push(exp);
+      }
+    });
+    
+    return relevant
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+      .slice(0, limit);
+  }
+  
+  // === KNOWLEDGE OPERATIONS ===
+  
+  async createKnowledgeChunk(nodeIds: string[], domain?: string): Promise<string> {
+    const subgraph = this.getSubgraph(nodeIds);
+    const knowledgeId = `knowledge_${Date.now()}`;
+    
+    // Generate summary if LLM available
+    let summary = 'Knowledge chunk';
+    if (this.openai && subgraph.nodes.length > 0) {
+      try {
+        const context = subgraph.nodes
+          .map(n => n.summary || n.content)
+          .join('\n');
+        
+        const completion = await this.openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            {
+              role: 'system',
+              content: 'Summarize the following knowledge in 2-3 sentences.'
+            },
+            { role: 'user', content: context }
+          ]
+        });
+        
+        summary = completion.choices[0].message.content || summary;
+      } catch (error) {
+        console.error('Failed to generate knowledge summary:', error);
+      }
+    }
+    
+    const knowledge: Knowledge = {
+      id: knowledgeId,
+      nodes: nodeIds,
+      edges: subgraph.edges,
+      summary,
+      domain
+    };
+    
+    this.knowledgeChunks.set(knowledgeId, knowledge);
+    this.save();
+    
+    return knowledgeId;
+  }
+  
+  // === PARALLEL EXPLORATION ===
+  
+  async exploreParallel(
+    startNodes: string[], 
+    depth = 2, 
+    contextQuery?: string
+  ): Promise<{ nodes: Node[], context: string }> {
+    const explored = new Set<string>();
+    const results: Node[] = [];
+    
+    // Parallel exploration from multiple starting points
+    await this.queue.addAll(
+      startNodes.map(nodeId => async () => {
+        const neighbors = this.getNeighbors(nodeId, depth);
+        neighbors.forEach(id => explored.add(id));
+      })
+    );
+    
+    // Collect all explored nodes
+    explored.forEach(id => {
+      const node = this.getNode(id);
+      if (node) results.push(node);
+    });
+    
+    // Generate context summary if LLM available
+    let context = `Explored ${results.length} nodes from ${startNodes.length} starting points`;
+    
+    if (this.openai && contextQuery) {
+      try {
+        const nodeContext = results
+          .map(n => n.summary || n.content)
+          .join('\n');
+        
+        const completion = await this.openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            {
+              role: 'system',
+              content: 'Based on the following information, answer the question or provide relevant context.'
+            },
+            { role: 'user', content: `Question: ${contextQuery}\n\nInformation:\n${nodeContext}` }
+          ]
+        });
+        
+        context = completion.choices[0].message.content || context;
+      } catch (error) {
+        console.error('Failed to generate context:', error);
+      }
+    }
+    
+    return { nodes: results, context };
+  }
+  
+  // === GRAPH OPERATIONS ===
+  
+  getNeighbors(nodeId: string, depth = 1): string[] {
+    if (!this.graph.hasNode(nodeId)) return [];
+    
+    const visited = new Set<string>();
+    const queue = [{ id: nodeId, level: 0 }];
+    
+    while (queue.length > 0) {
+      const { id, level } = queue.shift()!;
+      
+      if (level > depth) break;
+      if (visited.has(id)) continue;
+      
+      visited.add(id);
+      
+      if (level < depth) {
+        this.graph.forEachNeighbor(id, (neighborId) => {
+          if (!visited.has(neighborId)) {
+            queue.push({ id: neighborId, level: level + 1 });
+          }
+        });
+      }
+    }
+    
+    visited.delete(nodeId); // Remove the starting node
+    return Array.from(visited);
+  }
+
+  getSubgraph(nodeIds: string[]): { nodes: Node[], edges: Edge[] } {
+    const nodes: Node[] = [];
+    const edges: Edge[] = [];
+    const nodeSet = new Set(nodeIds);
+    
+    // Get nodes
+    nodeIds.forEach(id => {
+      const node = this.getNode(id);
+      if (node) nodes.push(node);
+    });
+    
+    // Get edges between these nodes
+    this.graph.forEachEdge((edge, attrs, source, target) => {
+      if (nodeSet.has(source) && nodeSet.has(target)) {
+        edges.push({
+          from: source,
+          to: target,
+          type: attrs.type,
+          metadata: attrs.metadata
+        });
+      }
+    });
+    
+    return { nodes, edges };
+  }
+
+  // === PLUGIN SYSTEM ===
+  
+  use(plugin: Plugin): void {
+    plugin.init(this);
+    this.plugins.set(plugin.name, plugin);
+  }
+
+  getPlugin(name: string): Plugin | undefined {
+    return this.plugins.get(name);
+  }
+
+  // === PERSISTENCE ===
+  
+  save(): void {
+    const data = {
+      nodes: [] as any[],
+      edges: [] as any[]
+    };
+    
+    this.graph.forEachNode((id, attrs) => {
+      data.nodes.push({ id, ...attrs });
+    });
+    
+    this.graph.forEachEdge((edge, attrs, source, target) => {
+      data.edges.push({ from: source, to: target, ...attrs });
+    });
+    
+    writeFileSync(this.dataPath, JSON.stringify(data, null, 2));
+  }
+
+  load(): void {
+    if (!existsSync(this.dataPath)) return;
+    
+    try {
+      const data = JSON.parse(readFileSync(this.dataPath, 'utf-8'));
+      
+      // Load nodes
+      data.nodes?.forEach((node: any) => {
+        this.graph.addNode(node.id, node);
+        // Rebuild search index
+        if (typeof node.content === 'string') {
+          this.searchIndex.add(node.id, node.content);
+        } else if (node.content?.text) {
+          this.searchIndex.add(node.id, node.content.text);
+        }
+      });
+      
+      // Load edges
+      data.edges?.forEach((edge: any) => {
+        if (this.graph.hasNode(edge.from) && this.graph.hasNode(edge.to)) {
+          this.graph.addEdge(edge.from, edge.to, {
+            type: edge.type,
+            metadata: edge.metadata,
+            created: edge.created
+          });
+        }
+      });
+    } catch (error) {
+      console.error('Failed to load graph:', error);
+    }
+  }
+
+  // === UTILITIES ===
+  
+  getStats() {
+    return {
+      nodes: this.graph.order,
+      edges: this.graph.size,
+      types: this.getUniqueTypes(),
+      tags: this.getUniqueTags()
+    };
+  }
+
+  private getUniqueTypes(): string[] {
+    const types = new Set<string>();
+    this.graph.forEachNode((id, attrs) => {
+      const node = attrs as Node;
+      if (node.type) types.add(node.type);
+    });
+    return Array.from(types);
+  }
+
+  private getUniqueTags(): string[] {
+    const tags = new Set<string>();
+    this.graph.forEachNode((id, attrs) => {
+      const node = attrs as Node;
+      node.tags?.forEach(tag => tags.add(tag));
+    });
+    return Array.from(tags);
+  }
+
+  clear(): void {
+    this.graph.clear();
+    this.searchIndex = new FlexSearch.Index({
+      tokenize: 'forward',
+      resolution: 9
+    });
+    this.save();
+  }
+}
+
+// === SIMPLE PLUGIN INTERFACE ===
+
+export interface Plugin {
+  name: string;
+  init(core: KnowraCore): void;
 }
 ```
 
-## API Design
+## MCP Server Integration
 
-### Core API Surface
+### Simple MCP Server
+
 ```typescript
-interface KnowraAPI {
-  // Knowledge Management
-  learn(content: string, options?: {
-    type?: NodeType;
-    project?: string;
-    tags?: string[];
-  }): Promise<{nodeId: string}>;
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+import { KnowraCore } from './KnowraCore.js';
 
-  connect(from: string, to: string, relationship: {
-    type: EdgeType;
-    strength?: number;
-    evidence?: string;
-  }): Promise<{edgeId: string}>;
+export class KnowraMCPServer {
+  private server: Server;
+  private knowra: KnowraCore;
 
-  // Querying
-  ask(query: string, options?: {
-    stage?: number;
-    timeframe?: string;
-    context?: string;
-  }): Promise<{
-    answer: string;
-    sources: string[];
-    confidence: number;
-    relatedPaths: string[];
-  }>;
+  constructor() {
+    this.knowra = new KnowraCore();
+    this.server = new Server(
+      {
+        name: 'knowra',
+        version: '1.0.0',
+      },
+      {
+        capabilities: {
+          tools: {}
+        }
+      }
+    );
 
-  // Temporal Operations
-  recall(options: {
-    timeframe: string; // "7d", "1m", "last-tuesday"
-    context?: string;
-    stage?: number;
-  }): Promise<{
-    nodes: KnowledgeNode[];
-    patterns: Pattern[];
-    summary: string;
-  }>;
+    this.setupTools();
+  }
 
-  // Summarization
-  summarize(options: {
-    topic?: string;
-    timeframe?: string;
-    stage?: number;
-    format?: 'bullet' | 'narrative' | 'structured';
-  }): Promise<{
-    summary: string;
-    keyInsights: string[];
-    gaps: string[];
-    recommendations: string[];
-  }>;
+  private setupTools(): void {
+    // Add knowledge
+    this.server.setRequestHandler('tools/list', async () => ({
+      tools: [
+        {
+          name: 'add_knowledge',
+          description: 'Add a knowledge node to the graph',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              content: { 
+                type: 'string',
+                description: 'The knowledge content to store'
+              },
+              type: { 
+                type: 'string',
+                description: 'Type of knowledge (optional)'
+              },
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Tags for the knowledge (optional)'
+              }
+            },
+            required: ['content']
+          }
+        },
+        {
+          name: 'search_knowledge',
+          description: 'Search for knowledge nodes',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query'
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results (default: 10)'
+              }
+            },
+            required: ['query']
+          }
+        },
+        {
+          name: 'connect_knowledge',
+          description: 'Create a relationship between two knowledge nodes',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              from: {
+                type: 'string',
+                description: 'Source node ID'
+              },
+              to: {
+                type: 'string',
+                description: 'Target node ID'
+              },
+              type: {
+                type: 'string',
+                description: 'Relationship type'
+              }
+            },
+            required: ['from', 'to', 'type']
+          }
+        },
+        {
+          name: 'get_context',
+          description: 'Get context around a knowledge node',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              nodeId: {
+                type: 'string',
+                description: 'Node ID to get context for'
+              },
+              depth: {
+                type: 'number',
+                description: 'Depth of context (default: 1)'
+              }
+            },
+            required: ['nodeId']
+          }
+        }
+      ]
+    }));
 
-  // Pattern Detection
-  patterns(options?: {
-    minOccurrences?: number;
-    timeframe?: string;
-    confidence?: number;
-  }): Promise<{
-    patterns: Pattern[];
-    emerging: Pattern[];
-    declining: Pattern[];
-  }>;
+    // Handle tool calls
+    this.server.setRequestHandler('tools/call', async (request) => {
+      const { name, arguments: args } = request.params;
+
+      switch (name) {
+        case 'add_knowledge': {
+          const id = this.knowra.addNode(args.content, {
+            type: args.type,
+            tags: args.tags
+          });
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Added knowledge node: ${id}`
+              }
+            ]
+          };
+        }
+
+        case 'search_knowledge': {
+          const results = this.knowra.search(args.query, args.limit || 10);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(results, null, 2)
+              }
+            ]
+          };
+        }
+
+        case 'connect_knowledge': {
+          const success = this.knowra.addEdge(args.from, args.to, args.type);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: success 
+                  ? `Connected ${args.from} to ${args.to} with type: ${args.type}`
+                  : 'Failed to create connection (nodes not found)'
+              }
+            ]
+          };
+        }
+
+        case 'get_context': {
+          const neighbors = this.knowra.getNeighbors(args.nodeId, args.depth || 1);
+          const subgraph = this.knowra.getSubgraph([args.nodeId, ...neighbors]);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(subgraph, null, 2)
+              }
+            ]
+          };
+        }
+
+        default:
+          throw new Error(`Unknown tool: ${name}`);
+      }
+    });
+  }
+
+  async start(): Promise<void> {
+    const transport = new StdioServerTransport();
+    await this.server.connect(transport);
+    console.error('Knowra MCP server started');
+  }
+}
+
+// Start server if run directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const server = new KnowraMCPServer();
+  server.start().catch(console.error);
 }
 ```
 
-## Implementation Roadmap
+## Example Plugin
 
-### Phase 1: MVP (Weeks 1-4)
-**Goal**: Basic graph operations with simple storage
-
-1. **Week 1**: Core graph structure with Graphology
-   - Basic node/edge creation
-   - In-memory storage only
-   - Simple TypeScript interfaces
-
-2. **Week 2**: LLM integration for natural language
-   - OpenAI API integration
-   - Basic text → graph operations
-   - Simple query processing
-
-3. **Week 3**: Temporal functionality
-   - Time-based node creation
-   - Basic retrieval by time
-   - Simple summarization
-
-4. **Week 4**: Storage persistence
-   - LevelGraph integration
-   - File system backup
-   - Basic testing
-
-### Phase 2: Enhanced Features (Weeks 5-8)
-**Goal**: Stage progression and semantic search
-
-1. **Week 5**: Stage management system
-   - 5-stage progression logic
-   - Stage-specific operations
-   - Pattern detection basics
-
-2. **Week 6**: Vector embeddings
-   - ChromaDB integration
-   - Semantic similarity search
-   - Automatic connection discovery
-
-3. **Week 7**: Advanced temporal navigation
-   - Complex time queries
-   - Path history tracking
-   - Knowledge decay implementation
-
-4. **Week 8**: API polish and documentation
-   - Complete API implementation
-   - Error handling
-   - Performance optimization
-
-### Phase 3: Production Ready (Weeks 9-12)
-**Goal**: Scalability and robustness
-
-1. **Week 9**: Performance optimization
-   - Indexing strategies
-   - Caching layers
-   - Memory management
-
-2. **Week 10**: Advanced features
-   - Visualization with Sigma.js
-   - Export/import functionality
-   - Advanced pattern recognition
-
-3. **Week 11**: Testing and reliability
-   - Comprehensive test suite
-   - Error recovery
-   - Data integrity checks
-
-4. **Week 12**: Documentation and examples
-   - Complete documentation
-   - Usage examples
-   - Migration guides
-
-## Performance Considerations
-
-### Memory Management
-- **In-memory cache**: Keep frequently accessed nodes/edges in memory
-- **Lazy loading**: Load graph sections on demand
-- **LRU eviction**: Remove least recently used items when memory constrained
-
-### Query Optimization
-- **Indexing strategy**: Index by content, type, time, and relationships
-- **Query planning**: Optimize complex graph traversals
-- **Result caching**: Cache frequent query results
-
-### Scalability Limits
-- **Target size**: 100k nodes, 500k edges for single instance
-- **Horizontal scaling**: Multiple graph instances for larger datasets
-- **Partitioning**: Split by time periods or topics
-
-### Benchmarks to Track
 ```typescript
-interface PerformanceBenchmarks {
-  nodeCreation: number; // nodes/second
-  edgeCreation: number; // edges/second
-  simpleQuery: number; // ms average
-  complexTraversal: number; // ms for 3+ hops
-  semanticSearch: number; // ms for vector similarity
-  summarization: number; // ms for context generation
-  memoryUsage: number; // MB per 1k nodes
+// Simple plugin to track access patterns
+export class AccessTrackerPlugin implements Plugin {
+  name = 'access-tracker';
+  private accessCounts = new Map<string, number>();
+
+  init(core: KnowraCore): void {
+    // Hook into getNode to track access
+    const originalGetNode = core.getNode.bind(core);
+    core.getNode = (id: string) => {
+      this.accessCounts.set(id, (this.accessCounts.get(id) || 0) + 1);
+      return originalGetNode(id);
+    };
+  }
+
+  getMostAccessed(limit = 10): Array<{ id: string; count: number }> {
+    return Array.from(this.accessCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id, count]) => ({ id, count }));
+  }
 }
 ```
 
-## Testing Strategy
+## Usage Example
 
-### Unit Tests
-- Individual graph operations
-- Stage progression logic
-- Temporal navigation functions
-- LLM integration components
+```typescript
+// Create knowledge graph
+const knowra = new KnowraCore('./my-knowledge.json');
 
-### Integration Tests
-- End-to-end knowledge learning flows
-- Complex query scenarios
-- Storage persistence reliability
-- Performance under load
+// Add knowledge
+const nodeId1 = knowra.addNode('TypeScript is a typed superset of JavaScript', {
+  type: 'fact',
+  tags: ['programming', 'typescript', 'javascript']
+});
 
-### Acceptance Tests
-- Real-world usage scenarios
-- Human validation of AI responses
-- Long-term knowledge evolution
-- Cross-project knowledge transfer
+const nodeId2 = knowra.addNode('React is a JavaScript library for building UIs', {
+  type: 'fact',
+  tags: ['programming', 'react', 'javascript']
+});
 
-## MVP Features vs Full Implementation
+// Connect knowledge
+knowra.addEdge(nodeId1, nodeId2, 'related_to');
 
-### MVP (Minimum Viable Product)
-✅ **Essential for basic functionality:**
-- Add knowledge nodes with simple text
-- Create manual connections between concepts
-- Basic natural language querying
-- Time-based retrieval (simple)
-- File-based persistence
-- Stage 1-2 operations (Information → Knowledge)
+// Search
+const results = knowra.search('JavaScript');
 
-### Full Implementation
-🚀 **Advanced features for production:**
-- Automatic relationship discovery via embeddings
-- Stage 3-5 operations (Experience → Strategy → Intuition)
-- Complex temporal queries ("what was I working on last Tuesday?")
-- Pattern recognition and wisdom synthesis
-- Real-time visualization
-- Multi-project knowledge graphs
-- Advanced summarization with different formats
-- Knowledge decay and reinforcement learning
+// Get context
+const context = knowra.getNeighbors(nodeId1, 2);
 
-## Risk Mitigation
+// Use a plugin
+knowra.use(new AccessTrackerPlugin());
+```
 
-### Technical Risks
-1. **Performance degradation**: Implement caching and indexing early
-2. **Memory leaks**: Regular testing with large datasets
-3. **LLM API costs**: Implement caching and local models as backup
-4. **Data corruption**: Regular backups and integrity checks
+## File Structure
 
-### Implementation Risks
-1. **Scope creep**: Stick to MVP first, then iterate
-2. **Over-engineering**: Use proven libraries, avoid custom implementations
-3. **Poor UX**: Regular user testing and feedback loops
-4. **Compatibility**: Target LTS Node.js versions, modern browsers
+```
+knowra/
+├── src/
+│   ├── core/
+│   │   └── KnowraCore.ts       # Core graph implementation
+│   ├── mcp/
+│   │   └── server.ts           # MCP server
+│   └── plugins/
+│       └── access-tracker.ts   # Example plugin
+├── package.json
+├── tsconfig.json
+└── knowra-data.json            # Graph storage
+```
 
-## Conclusion
+## Key Scenarios
 
-This technical proposal outlines a practical path to implementing the Knowra knowledge graph system using proven TypeScript/JavaScript libraries. The approach emphasizes:
+### 1. Codebase Indexing
+```typescript
+// Index a codebase for intelligent search
+const knowra = new KnowraCore('./codebase-knowledge.json', process.env.OPENAI_KEY);
 
-1. **Simplicity first**: Start with MVP, add complexity incrementally
-2. **Proven technologies**: Leverage mature libraries rather than custom solutions
-3. **Clear evolution path**: Well-defined phases from basic to advanced features
-4. **Performance awareness**: Design with scalability in mind from the start
+// Encode implementation insights
+const nodeId = await knowra.encodeInformation(
+  'The authentication module uses JWT tokens with refresh rotation. Implementation in auth.service.ts handles token generation and validation.',
+  { type: 'implementation', tags: ['auth', 'security', 'jwt'] }
+);
 
-The combination of Graphology (graph engine), LevelGraph (persistence), ChromaDB (semantic search), and OpenAI/Anthropic APIs (natural language) provides a solid foundation for building a human-like knowledge system that can evolve from simple information storage to intuitive wisdom synthesis.
+// Later: Find latest insights
+const results = await knowra.semanticSearch(
+  'How does authentication work in this codebase?'
+);
 
-**Next steps**: Begin with Phase 1 MVP implementation, focusing on core graph operations and basic natural language integration.
+// Get full context
+const context = await knowra.exploreParallel(
+  results.map(r => r.id),
+  2,
+  'Explain the authentication flow'
+);
+```
+
+### 2. Task Management Database
+```typescript
+// Track what's been done and what's next
+const taskGraph = new KnowraCore('./tasks.json', process.env.OPENAI_KEY);
+
+// Record completed work
+const doneId = await taskGraph.encodeInformation(
+  'Completed user authentication module with JWT implementation',
+  { type: 'completed', category: 'backend' }
+);
+
+// Record next steps
+const todoId = await taskGraph.encodeInformation(
+  'Need to add rate limiting to authentication endpoints',
+  { type: 'todo', category: 'backend', tags: ['security', 'priority-high'] }
+);
+
+// Connect tasks
+taskGraph.addEdge(doneId, todoId, 'leads_to');
+
+// Track the journey
+taskGraph.trackExperience(
+  [doneId, todoId],
+  'Authentication implementation requires rate limiting for production',
+  true
+);
+
+// AI never loses context
+const taskContext = await taskGraph.semanticSearch(
+  'What needs to be done for authentication?'
+);
+```
+
+### 3. Knowledge Evolution
+```typescript
+// Track how understanding improves
+const learningGraph = new KnowraCore('./learning.json', process.env.OPENAI_KEY);
+
+// Initial understanding
+const v1 = await learningGraph.encodeInformation(
+  'React components are functions that return JSX',
+  { type: 'concept', version: 1 }
+);
+
+// Deeper understanding
+const v2 = await learningGraph.encodeInformation(
+  'React components use hooks for state and lifecycle. The useState and useEffect hooks replace class component patterns.',
+  { type: 'concept', version: 2 }
+);
+
+// Connect evolution
+learningGraph.addEdge(v1, v2, 'evolved_to', { strength: 1.5 });
+
+// Create knowledge chunk
+const knowledgeId = await learningGraph.createKnowledgeChunk(
+  [v1, v2],
+  'React Concepts'
+);
+
+// Track learning experience
+learningGraph.trackExperience(
+  [v1, v2],
+  'Understanding of React evolved from basic components to hooks',
+  true
+);
+```
+
+## Key Features Added
+
+### Intelligent Capabilities
+- ✅ **LLM Encoding**: Transform text into structured knowledge using OpenAI
+- ✅ **Semantic Search**: Find relevant information using embeddings
+- ✅ **Experience Tracking**: Learn from graph traversal patterns
+- ✅ **Knowledge Chunks**: Manage subgraphs as coherent knowledge units
+- ✅ **Parallel Exploration**: Build context from multiple starting points
+- ✅ **Hybrid Search**: Combine semantic and text search for best results
+
+### Maintained Simplicity
+- ✅ Still uses JSON for storage (progressive enhancement path)
+- ✅ Graceful fallback when OpenAI unavailable
+- ✅ Plugin architecture for extensibility
+- ✅ Clean API surface
+- ✅ MCP server integration
+
+## Why This Approach?
+
+1. **Practical Intelligence**: LLM integration that actually helps, not hinders
+2. **Progressive Enhancement**: Works without OpenAI, better with it
+3. **Real-World Scenarios**: Designed for actual use cases (codebase knowledge, task tracking)
+4. **Maintains Simplicity**: Core remains understandable and maintainable
+5. **Claude Code Ready**: Enhanced MCP integration with semantic capabilities
+6. **Scalable**: Can grow from simple JSON to vector databases via plugins
+
+## Getting Started
+
+```bash
+# Install dependencies
+npm install graphology flexsearch @modelcontextprotocol/sdk zod
+
+# Build
+npm run build
+
+# Run MCP server
+node dist/mcp/server.js
+
+# Configure Claude Code
+# Add to claude_desktop_config.json:
+{
+  "mcpServers": {
+    "knowra": {
+      "command": "node",
+      "args": ["path/to/knowra/dist/mcp/server.js"]
+    }
+  }
+}
+```
+
+## Summary
+
+This intelligent yet simple approach:
+- Provides real AI capabilities through OpenAI integration
+- Maintains architectural simplicity
+- Supports three key scenarios out of the box
+- Gracefully degrades when AI unavailable
+- Can be progressively enhanced through plugins
+- Tracks experience and knowledge evolution naturally
+
+**Build intelligence into the core, keep the architecture simple.**
+
+## Next Steps
+
+1. **Phase 1**: Implement core with OpenAI integration
+2. **Phase 2**: Add MCP server with semantic search tools
+3. **Phase 3**: Build CLI for codebase indexing
+4. **Phase 4**: Create GUI explorer plugin
+5. **Phase 5**: Add vector database plugin for scale
+
+Focus on making AI-assisted knowledge management practical and accessible.
