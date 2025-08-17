@@ -1,30 +1,58 @@
 /**
  * PatternDetector - Advanced pattern detection and creation service
  * 
- * Extracts patterns from path traversals and manages pattern lifecycle
+ * Extracts patterns from path traversals and manages pattern lifecycle.
+ * Now enhanced with graph pattern mining capabilities.
  */
 
-import type { Pattern } from '../../types.js';
+import type { Pattern, GraphPattern, PatternMiningOptions, PatternMetrics } from '../../types.js';
 import { generateId } from '../../utils.js';
+import type { GraphFoundation } from '../../GraphFoundation.js';
+import { GraphPatternMining } from '../../algorithms/GraphPatternMining.js';
 
 export interface PatternDetectorConfig {
+  // Sequential pattern detection options
   minPathLength?: number;
   similarityThreshold?: number;
   maxPatternsPerDetection?: number;
+  
+  // Graph pattern mining options
+  enableGraphPatterns?: boolean;
+  graphPatternOptions?: PatternMiningOptions;
 }
 
 export class PatternDetector {
   private patterns = new Map<string, Pattern>();
+  private graphPatterns = new Map<string, GraphPattern>();
   private statsCounters = new Map<string, number>(); // Track stats update counts
   private config: Required<PatternDetectorConfig>;
+  private graphPatternMiner?: GraphPatternMining;
 
-  constructor(config: PatternDetectorConfig = {}) {
+  constructor(config: PatternDetectorConfig = {}, graphFoundation?: GraphFoundation) {
     this.config = {
       minPathLength: 3,
       similarityThreshold: 0.5, // Lower threshold to catch similar patterns
       maxPatternsPerDetection: 5,
+      enableGraphPatterns: false,
+      graphPatternOptions: {
+        minSupport: 0.1,
+        minConfidence: 0.3,
+        maxPatternSize: 5,
+        patternTypes: ['star', 'chain', 'cycle', 'tree', 'bridge', 'cluster', 'hub'],
+        includeMetadata: false,
+      },
       ...config,
     };
+    
+    // Initialize graph pattern mining if enabled and graph foundation provided
+    if (this.config.enableGraphPatterns && graphFoundation) {
+      this.graphPatternMiner = new GraphPatternMining(graphFoundation, {
+        minSupport: this.config.graphPatternOptions!.minSupport,
+        minConfidence: this.config.graphPatternOptions!.minConfidence,
+        maxPatternSize: this.config.graphPatternOptions!.maxPatternSize,
+        enabledPatternTypes: this.config.graphPatternOptions!.patternTypes as Array<'star' | 'chain' | 'cycle' | 'tree' | 'bridge' | 'cluster' | 'hub'>,
+      });
+    }
   }
 
   /**
@@ -239,6 +267,97 @@ export class PatternDetector {
       avgConfidence: totalConfidence / patterns.length,
       avgFrequency: totalFrequency / patterns.length,
       mostCommonContext,
+    };
+  }
+
+  // ============ Graph Pattern Mining Methods ============
+
+  /**
+   * Mine structural patterns from the graph
+   */
+  mineGraphPatterns(options?: PatternMiningOptions): GraphPattern[] {
+    if (!this.graphPatternMiner) {
+      console.warn('Graph pattern mining not enabled or graph foundation not provided');
+      return [];
+    }
+
+    const patterns = this.graphPatternMiner.minePatterns(options);
+    
+    // Store mined patterns
+    for (const pattern of patterns) {
+      this.graphPatterns.set(pattern.id, pattern);
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Get all graph patterns
+   */
+  getAllGraphPatterns(): GraphPattern[] {
+    return Array.from(this.graphPatterns.values());
+  }
+
+  /**
+   * Get graph patterns by type
+   */
+  getGraphPatternsByType(type: 'star' | 'chain' | 'cycle' | 'tree' | 'bridge' | 'cluster' | 'hub'): GraphPattern[] {
+    return Array.from(this.graphPatterns.values())
+      .filter(pattern => pattern.type === type);
+  }
+
+  /**
+   * Get pattern metrics including graph patterns
+   */
+  getGraphPatternMetrics(): PatternMetrics | null {
+    if (!this.graphPatternMiner) {
+      return null;
+    }
+
+    return this.graphPatternMiner.getPatternMetrics();
+  }
+
+  /**
+   * Clear all graph patterns
+   */
+  clearGraphPatterns(): void {
+    this.graphPatterns.clear();
+    if (this.graphPatternMiner) {
+      this.graphPatternMiner.clearPatterns();
+    }
+  }
+
+  /**
+   * Update graph pattern mining configuration
+   */
+  updateGraphPatternConfig(config: PatternMiningOptions): void {
+    if (this.graphPatternMiner) {
+      this.graphPatternMiner.updateConfig({
+        minSupport: config.minSupport,
+        minConfidence: config.minConfidence,
+        maxPatternSize: config.maxPatternSize,
+        enabledPatternTypes: config.patternTypes as Array<'star' | 'chain' | 'cycle' | 'tree' | 'bridge' | 'cluster' | 'hub'>,
+      });
+    }
+  }
+
+  /**
+   * Check if graph pattern mining is enabled
+   */
+  isGraphPatternMiningEnabled(): boolean {
+    return this.graphPatternMiner !== undefined;
+  }
+
+  /**
+   * Get combined statistics for both sequential and graph patterns
+   */
+  getCombinedStatistics(): {
+    sequential: ReturnType<PatternDetector['getStatistics']>;
+    graph: PatternMetrics | null;
+  } {
+    return {
+      sequential: this.getStatistics(),
+      graph: this.getGraphPatternMetrics(),
     };
   }
 }

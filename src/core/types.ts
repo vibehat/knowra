@@ -169,6 +169,49 @@ export interface Pattern {
 }
 
 /**
+ * GraphPattern represents structural patterns detected in the knowledge graph
+ */
+export interface GraphPattern {
+  id: string;
+  type: 'star' | 'chain' | 'cycle' | 'tree' | 'bridge' | 'cluster' | 'hub';
+  description: string; // Human-readable pattern description
+  nodes: string[]; // Nodes involved in this pattern
+  edges: Array<{ from: string; to: string; type: string }>; // Edges that form the pattern
+  frequency: number; // How often this pattern occurs
+  confidence: number; // Confidence in pattern validity (0-1)
+  support: number; // Support value for pattern mining (0-1)
+  lift?: number; // Lift metric for pattern significance
+  conviction?: number; // Conviction metric for pattern quality
+  contexts: string[]; // Contexts where this pattern appears
+  lastSeen: Date; // When pattern was last observed
+  metadata?: Record<string, unknown>; // Additional pattern metadata
+}
+
+/**
+ * Pattern mining configuration options
+ */
+export interface PatternMiningOptions {
+  minSupport?: number; // Minimum support threshold (0-1)
+  minConfidence?: number; // Minimum confidence threshold (0-1)
+  maxPatternSize?: number; // Maximum nodes in a pattern
+  patternTypes?: Array<'star' | 'chain' | 'cycle' | 'tree' | 'bridge' | 'cluster' | 'hub'>;
+  includeMetadata?: boolean; // Whether to include edge metadata in patterns
+}
+
+/**
+ * Pattern analysis metrics
+ */
+export interface PatternMetrics {
+  totalPatterns: number;
+  patternTypeDistribution: Record<string, number>;
+  avgSupport: number;
+  avgConfidence: number;
+  mostFrequentPatterns: GraphPattern[];
+  highestQualityPatterns: GraphPattern[];
+  coveragePercentage: number; // Percentage of graph covered by patterns
+}
+
+/**
  * Insight represents knowledge extracted from experience analysis
  */
 export interface Insight {
